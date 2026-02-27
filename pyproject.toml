@@ -1,0 +1,6 @@
+[project]
+name = "usaspending-contract-awards-pipeline"
+version = "0.1.0"
+description = "Streaming analysis pipeline for USAspending contract award data"
+authors = [{ name = "Clawzilla" }]
+requires-python = ">=3.11"
