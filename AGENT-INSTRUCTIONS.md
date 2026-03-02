@@ -42,7 +42,13 @@ When asked to build a new feature or process a new data field, follow this exact
 4. **Wire to I/O (If needed):** Update `backend/src/io.py` if new CSV sources need to be scanned or if a new output needs to be written using the `COPY ... TO 'file.csv'` command.
 5. **Orchestrate:** Update the script in `backend/scripts/` to connect the I/O read, pass the relation through your pure function, and pipe the result to the I/O write function.
 
-## 6. Code Example: The Standard We Expect
+## 6. Environment Management
+- **Use UV for Python envs:** All Python dependencies must be managed with [UV](https://github.com/astral-sh/uv). Do not rely on `pipenv`, `poetry`, or bare `pip install`.
+- Keep the UV lockfile artifacts (for example `uv.lock`) up to date whenever you add or upgrade packages.
+- Document any new UV commands or scripts in the repository so other agents can reproduce the environment easily.
+- **Secrets discipline:** Store every API key, credential, or endpoint token in the project `.env` file (and never hardcode them in code or commit history).
+
+## 7. Code Example: The Standard We Expect
 ```python
 # GOOD: Pure, typed, composable relational logic
 import duckdb
