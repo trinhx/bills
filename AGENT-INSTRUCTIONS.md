@@ -19,6 +19,7 @@ You must place code in the correct directories. Do not create new root-level fol
 - `backend/src/analyze.py`: ALL pure functions for aggregating or analyzing data go here.
 - `backend/scripts/`: ONLY orchestrator scripts go here. These scripts import from `src/` to wire DuckDB I/O to transformations.
 - `backend/tests/`: ALL unit and integration tests go here.
+- `backend/models/`: Central definitions for Pydantic (or dataclass) schemas used for structured inputs/outputs and validation. Always import shared schemas from here instead of redefining them inline.
 
 ## 4. Coding Standards
 ### DO THIS:
@@ -26,6 +27,7 @@ You must place code in the correct directories. Do not create new root-level fol
 - Write small, composable functions that chain DuckDB relational operations (e.g., `.filter()`, `.select()`, `.aggregate()`).
 - Leverage DuckDB's native SQL functions for data casting and string manipulation—they are faster and safer than Python loops.
 - Explicitly pass DuckDB connections or relations as arguments; do not rely on global connections.
+- Reuse the schemas in `backend/models/` to validate inbound/outbound data structures so every transform has predictable, typed inputs and outputs.
 
 ### NEVER DO THIS (Anti-Patterns):
 - **NO OOP State:** Do NOT create classes to hold data state. Use plain functions.

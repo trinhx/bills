@@ -1,1 +1,25 @@
 .env
+
+# Ignore all subdirectories inside data/
+data/*/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+build/
+dist/
+/.venv
+.venv/
+*.log
+.pytest_cache/
+.mypy_cache/
+.coverage*
+htmlcov/
+
+# Ignore backend data payloads
+backend/data/
