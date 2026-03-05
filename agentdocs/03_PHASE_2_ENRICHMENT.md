@@ -17,8 +17,8 @@
 1) Pure extraction/join functions (`backend/src/transform.py`)
 - `extract_unique_uei(rel) -> DuckDBPyRelation` (distinct UEIs from `raw_filtered_awards`)
 - Pure join helpers to merge cached tables onto the main relation:
-  - Join UEI -> LEI
-  - LEI -> UPE LEI
+  - Join UEI -> entity hierarchy results (parent name, CAGE, etc.)
+  - Join parent identifier -> ticker/is_public (from OpenFIGI)
   - UPE LEI -> ticker/is_public/parent_company_name
   - (ticker, action_date) -> market_cap/sector
 - All joins should be left joins; unresolved values become NULL.

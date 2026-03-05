@@ -64,7 +64,9 @@ All logic must map to this exact repository structure. The `backend/data/cache/`
 - `period_of_performance_current_end_date` (DATE)
 - `awarding_agency_name` (TEXT)
 - `awarding_sub_agency_name` (TEXT)
+- `cage_code` (TEXT) *(Required)*
 - `recipient_parent_uei` (TEXT) - Primary key for entity *(Required)*
+- `recipient_parent_name` (TEXT) *(Required)*
 - `recipient_parent_name_raw` (TEXT) *(Required)*
 - `product_or_service_code` (TEXT) *(Required)*
 - `product_or_service_code_description` (TEXT)
@@ -79,12 +81,18 @@ All logic must map to this exact repository structure. The `backend/data/cache/`
 The following columns are added through successive phases to the base ingestion schema (Section 3.1), culminating in the `signals_awards` table:
 
 **Phase 2 – Entity and Market Enrichment:**
-- `parent_company_name` (TEXT) – Highest level parent (from GLEIF)
+- `cage_business_name` (TEXT) – Business legal name (from CAGE)
+- `cage_update_date` (DATE) – Last update date (from CAGE)
+- `is_highest` (BOOLEAN) – Whether the business is the highest level parent (from CAGE)
+- `highest_level_owner_name` (TEXT) – Resolved highest level parent name (from CAGE)
+- `highest_level_cage_code` (TEXT) – CAGE code of Highest level parent (from CAGE)
+- `highest_level_cage_update_date` (DATE) – Last update date for the highest level parent (from CAGE)
 - `is_public` (BOOLEAN) – Whether the parent is publicly traded (from OpenFIGI)
 - `ticker` (TEXT) – Public ticker (Exchange:Ticker) (from OpenFIGI)
 - `market_cap` (DOUBLE) – Market capitalization at `action_date` (from Yahoo Finance)
 - `sector` (TEXT) – Sector classification (from Yahoo Finance)
 - `last_verified_date` (DATE) – Timestamp of enrichment (system)
+- `theme` (TEXT) – Thematic classification derived from Phase 3 Themes
 
 **Phase 3 – Theme and Deliverable Classification (from lookup tables):**
 - `naics_title` (TEXT) – Short industry title from NAICS lookup
@@ -124,14 +132,11 @@ Recommended tables:
 #### 4.2.1 Cache schemas (agent MUST implement exactly)
 Create these tables (or equivalent) in `backend/data/cache/cache.duckdb`:
 
-- `cache_gleif_uei_lei`
-  `(uei TEXT PRIMARY KEY, lei TEXT, fetched_at TIMESTAMP, source_payload_hash TEXT, status TEXT)`
+- `cache_entity_hierarchy`
+`(uei TEXT PRIMARY KEY, cage_code TEXT, cage_business_name TEXT, cage_update_date DATE, is_highest BOOLEAN, highest_level_owner_name TEXT, highest_level_cage_code TEXT, highest_level_cage_update_date DATE, result_status TEXT, last_verified TIMESTAMP)`
 
-- `cache_gleif_lei_upe`
-  `(lei TEXT PRIMARY KEY, upe_lei TEXT, fetched_at TIMESTAMP, source_payload_hash TEXT, status TEXT)`
-
-- `cache_openfigi_lei_ticker`
-  `(lei TEXT PRIMARY KEY, ticker TEXT, exchange TEXT, security_type TEXT, fetched_at TIMESTAMP, source_payload_hash TEXT, status TEXT)`
+- `cache_openfigi_ticker`
+  `(highest_level_owner_name TEXT PRIMARY KEY, ticker TEXT, exchange TEXT, security_type TEXT, fetched_at TIMESTAMP, source_payload_hash TEXT, status TEXT)`
 
 - `cache_market_cap`
   `(ticker TEXT, date DATE, market_cap DOUBLE, sector TEXT, fetched_at TIMESTAMP, source_payload_hash TEXT, status TEXT, PRIMARY KEY (ticker, date))`
@@ -143,9 +148,9 @@ Create these tables (or equivalent) in `backend/data/cache/cache.duckdb`:
 - Implement a single retry/backoff policy shared across providers.
 - Retry only on retryable conditions (HTTP 429, 5xx, timeouts) with exponential backoff + jitter; honor `Retry-After` if present.
 - Hard-cap attempts (e.g., 5) and record failures in `cache_failures`.
+- **Logic:** Search UEI -> Fallback to CAGE if 0/Multiple results -> Traverse hierarchy to "Highest Level Owner" -> Fallback to local legal name if no parent exists.
 
 Provider notes:
-- **GLEIF:** conservative rate limiting (e.g., 60 req/min), 429 => pause and resume.
 - **OpenFIGI:** conservative rate limiting, prefer batching/bulk endpoints, 429/5xx => backoff and resume.
 - **Yahoo Finance / yfinance:** treat as throttled/unstable; batch where possible; cache aggressively; backoff on "Too Many Requests".
 
