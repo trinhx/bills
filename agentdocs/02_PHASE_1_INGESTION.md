@@ -11,7 +11,8 @@
 1) Define models (`backend/models/contracts.py`)
 - Create Python `@dataclass` models reflecting:
   - Base ingestion schema (Phase 1 columns)
-  - Enriched/calculated schema (Phase 2-4 columns)
+  - Enriched/calculated schema (Phase 2 columns)
+  - Theme/Classification schema (Phase 3 columns: `naics_title`, `naics_description`, `psc_name`, `psc_includes`, `psc_category`, `psc_level_1_category`, and `deliverable`)
 - Models are for: type hints, test fixtures, and small API payloads; not for row-by-row ingestion.
 
 2) Draft pure transform functions (`backend/src/transform.py`)

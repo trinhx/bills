@@ -34,6 +34,7 @@ All logic must map to this exact repository structure. The `backend/data/cache/`
 │   │   ├── out
 │   │   ├── raw
 │   │   │   ├── contracts
+│   │   │   ├── lookups       # External CSV lookups (NAICS/PSC)
 │   │   │   └── samples
 │   │   └── results
 │   ├── docs
@@ -73,18 +74,34 @@ All logic must map to this exact repository structure. The `backend/data/cache/`
 - `transaction_description` (TEXT) *(Required)*
 - `award_type` (TEXT)
 
-### 3.2 Enriched & calculated schema
-- `parent_company_name` (GLEIF) - Highest level parent
-- `is_public` (OpenFIGI) - Filter: Common Stock
-- `ticker` (OpenFIGI) - Public ticker (Exchange:Ticker)
-- `market_cap` (Yahoo Finance API) - Market cap at `action_date`
-- `sector` (Yahoo Finance API)
-- `alpha_ratio` (Calculated)
-- `difference_between_obligated_and_potential` (Calculated)
-- `duration_days` (Calculated)
-- `acv_signal` (Calculated)
-- `acv_alpha_ratio` (Calculated)
-- `last_verified_date` (System)
+### 3.2 Enriched, Thematic, and Calculated Schema (Final Output)
+
+The following columns are added through successive phases to the base ingestion schema (Section 3.1), culminating in the `signals_awards` table:
+
+**Phase 2 – Entity and Market Enrichment:**
+- `parent_company_name` (TEXT) – Highest level parent (from GLEIF)
+- `is_public` (BOOLEAN) – Whether the parent is publicly traded (from OpenFIGI)
+- `ticker` (TEXT) – Public ticker (Exchange:Ticker) (from OpenFIGI)
+- `market_cap` (DOUBLE) – Market capitalization at `action_date` (from Yahoo Finance)
+- `sector` (TEXT) – Sector classification (from Yahoo Finance)
+- `last_verified_date` (DATE) – Timestamp of enrichment (system)
+
+**Phase 3 – Theme and Deliverable Classification (from lookup tables):**
+- `naics_title` (TEXT) – Short industry title from NAICS lookup
+- `naics_description` (TEXT) – Full NAICS description
+- `psc_name` (TEXT) – Name of product/service from PSC lookup
+- `psc_includes` (TEXT) – Description of items included from PSC lookup
+- `psc_category` (TEXT) – Broad category (e.g., "Product", "Service")
+- `psc_level_1_category` (TEXT) – Highest-level PSC category (e.g., "Research and Development")
+- `deliverable` (TEXT) – Derived from `psc_level_1_category` with fallback to `psc_category`
+
+**Phase 4 – Alpha Signals (calculated):**
+- `alpha_ratio` (DOUBLE) – `federal_action_obligation / NULLIF(market_cap, 0)`
+- `difference_between_obligated_and_potential` (NUMERIC) – `potential_total_value_of_award - total_dollars_obligated`
+- `duration_days` (INTEGER) – `period_of_performance_current_end_date - action_date` (with 30‑day floor)
+- `acv_signal` (DOUBLE) – Annualized contract value: `(federal_action_obligation / GREATEST(30, duration_days)) * 365.25`
+- `acv_alpha_ratio` (DOUBLE) – `acv_signal / NULLIF(market_cap, 0)`
+
 
 ## 4. DuckDB persistence rules (Strict)
 
@@ -131,3 +148,15 @@ Provider notes:
 - **GLEIF:** conservative rate limiting (e.g., 60 req/min), 429 => pause and resume.
 - **OpenFIGI:** conservative rate limiting, prefer batching/bulk endpoints, 429/5xx => backoff and resume.
 - **Yahoo Finance / yfinance:** treat as throttled/unstable; batch where possible; cache aggressively; backoff on "Too Many Requests".
+
+## 6. Logging and Monitoring
+- All scripts must use Python's built-in `logging` module (configured at INFO level in production, DEBUG for development).
+- Logs should be written to both console and a rotating file in `backend/data/logs/` (e.g., `pipeline.log`).
+- Key events to log:
+  - Start and end of each phase (with timestamps).
+  - Count of input/output records at major steps.
+  - Number of distinct keys processed (e.g., unique UEIs in Phase 2).
+  - API call summaries (success/failure counts, cache hits/misses) – avoid logging per‑row details.
+  - Warnings or errors (e.g., missing lookup files, unexpected API responses).
+- Sensitive information (API keys, tokens) must never be logged.
+- Use structured logging (JSON format) if downstream analysis of logs is anticipated.
