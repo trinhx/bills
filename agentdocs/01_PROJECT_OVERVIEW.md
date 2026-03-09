@@ -24,17 +24,18 @@ All logic must map to this exact repository structure. The `backend/data/cache/`
 │   │   │   └── endpoints
 │   │   ├── core
 │   │   ├── services
+│   │   │   └── providers    # External API and scraping logic (e.g., cage_scraper.py)
 │   │   └── utils
 │   ├── data
 │   │   ├── analysis
-│   │   ├── cache         # (Create this) DuckDB cache DBs (e.g., cache.duckdb)
+│   │   ├── cache            # (Create this) DuckDB cache DBs (e.g., cache.duckdb)
 │   │   ├── cleaned
 │   │   ├── config
 │   │   ├── logs
 │   │   ├── out
 │   │   ├── raw
 │   │   │   ├── contracts
-│   │   │   ├── lookups       # External CSV lookups (NAICS/PSC)
+│   │   │   ├── lookups      # External CSV lookups (NAICS/PSC)
 │   │   │   └── samples
 │   │   └── results
 │   ├── docs
@@ -83,7 +84,7 @@ The following columns are added through successive phases to the base ingestion 
 **Phase 2 – Entity and Market Enrichment:**
 - `cage_business_name` (TEXT) – Business legal name (from CAGE)
 - `cage_update_date` (DATE) – Last update date (from CAGE)
-- `is_highest` (BOOLEAN) – Whether the business is the highest level parent (from CAGE)
+- `is_highest` (BOOLEAN) – Business is the highest level parent (from CAGE)
 - `highest_level_owner_name` (TEXT) – Resolved highest level parent name (from CAGE)
 - `highest_level_cage_code` (TEXT) – CAGE code of Highest level parent (from CAGE)
 - `highest_level_cage_update_date` (DATE) – Last update date for the highest level parent (from CAGE)
@@ -92,7 +93,7 @@ The following columns are added through successive phases to the base ingestion 
 - `market_cap` (DOUBLE) – Market capitalization at `action_date` (from Yahoo Finance)
 - `sector` (TEXT) – Sector classification (from Yahoo Finance)
 - `last_verified_date` (DATE) – Timestamp of enrichment (system)
-- `theme` (TEXT) – Thematic classification derived from Phase 3 Themes
+- `theme_llm` (TEXT) – Thematic classifaction we may derive later in phase 5 (not yet implemented) using an LLMA
 
 **Phase 3 – Theme and Deliverable Classification (from lookup tables):**
 - `naics_title` (TEXT) – Short industry title from NAICS lookup
@@ -148,7 +149,7 @@ Create these tables (or equivalent) in `backend/data/cache/cache.duckdb`:
 - Implement a single retry/backoff policy shared across providers.
 - Retry only on retryable conditions (HTTP 429, 5xx, timeouts) with exponential backoff + jitter; honor `Retry-After` if present.
 - Hard-cap attempts (e.g., 5) and record failures in `cache_failures`.
-- **Logic:** Search UEI -> Fallback to CAGE if 0/Multiple results -> Traverse hierarchy to "Highest Level Owner" -> Fallback to local legal name if no parent exists.
+- **Logic:** Search UEI -> For each UEI, the CAGE website is scraped to retrieve the entity’s details and its highest-level owner (if any). If no parent exists, the entity itself is considered the highest-level owner. Results are cached in cache_entity_hierarchy
 
 Provider notes:
 - **OpenFIGI:** conservative rate limiting, prefer batching/bulk endpoints, 429/5xx => backoff and resume.
