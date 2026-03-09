@@ -207,7 +207,7 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
 
 def fetch_html(session: requests.Session, url: str) -> str:
     """Executes HTTP GET request and returns HTML text."""
-    response = session.get(url)
+    response = session.get(url, timeout=0.01)
     response.raise_for_status()
     return response.text
 
