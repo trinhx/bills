@@ -5,10 +5,10 @@ This module uses functional programming to enrich Phase 2 "CAGE fields" by scrap
 HTML pages from https://cage.dla.mil/ (no public API).
 
 Data flow (network -> parse -> schema dict):
-1) UEI search page:
-   - fetch: GET /Search/Results?q={recipient_parent_uei}&page=1
+1) CAGE search page:
+   - fetch: GET /Search/Results?q={cage_code}&page=1
    - parse: parse_search_results(html) finds the first Details link (e.g., /Search/Details?id=...).
-   - purpose: locate the entity Details page for the UEI (no schema fields populated here).
+   - purpose: locate the entity Details page for the CAGE code (no schema fields populated here).
    - schema reference: 01_PROJECT_OVERVIEW.md
 
 2) Entity Details page (single-pass, no traversal):
@@ -216,15 +216,15 @@ def fetch_html(session: requests.Session, url: str) -> str:
 
 
 def enrich_cage_data(
-    uei: str, headers: Dict[str, str], cookies: Dict[str, str]
+    cage_code: str, headers: Dict[str, str], cookies: Dict[str, str]
 ) -> Optional[Dict[str, Any]]:
     """Main orchestrator function for the single-pass CAGE enrichment pipeline."""
     with requests.Session() as session:
         session.headers.update(headers)
         session.cookies.update(cookies)
 
-        # Step 1: Search UEI and extract the details URI
-        search_html = fetch_html(session, f"{BASE_URL}/Search/Results?q={uei}&page=1")
+        # Step 1: Search CAGE code and extract the details URI
+        search_html = fetch_html(session, f"{BASE_URL}/Search/Results?q={cage_code}&page=1")
         details_uri = parse_search_results(search_html)
 
         if not details_uri:

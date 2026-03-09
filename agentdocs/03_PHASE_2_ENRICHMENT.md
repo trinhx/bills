@@ -4,7 +4,7 @@
 
 ## Non-negotiable performance rules
 - Do **not** make network/API calls per row.
-- Extract unique UEIs, resolve once via CAGE/APIs, cache, then join back.
+- Extract unique CAGE codes, resolve once via CAGE/APIs, cache, then join back.
 - All caches persist in: `backend/data/cache/cache.duckdb` (schemas defined in `01_PROJECT_OVERVIEW.md`).
 
 ## Architecture boundaries (match AGENT-INSTRUCTIONS)
@@ -15,9 +15,9 @@
 ## Execution steps (TDD + staged integration)
 
 1) Pure extraction/join functions (`backend/src/transform.py`)
-- `extract_unique_uei(rel) -> DuckDBPyRelation` (distinct UEIs from `raw_filtered_awards`)
+- `extract_unique_cage_code(rel) -> DuckDBPyRelation` (distinct CAGE codes from `raw_filtered_awards`)
 - Pure join helpers to merge cached tables onto the main relation:
-  - Join UEI -> DLA CAGE entity hierarchy results (highest_level_owner_name, highest_level_cage_code, etc.)
+  - Join CAGE code -> DLA CAGE entity hierarchy results (highest_level_owner_name, highest_level_cage_code, etc.)
   - Join highest_level_owner_name -> ticker/is_public (from OpenFIGI)
   - Join (ticker, action_date) -> market_cap/sector (from Yahoo Finance)
 - All joins should be left joins; unresolved values become NULL.
@@ -34,7 +34,7 @@ Implement functions that:
   - Honor `Retry-After` headers if provided.
   - Cap attempts (e.g., 5); on terminal failure, return a structured failure record for `cache_failures`.
 - Provider responsibilities:
-  - DLA CAGE Scraper (`cage_scraper.py`): Input UEI -> Search -> Parse Details URI -> Fetch single Details page. Extract base entity and Highest Level Owner info directly from this page (no recursive traversal). If the "Highest Level Owner" block shows `<div>Information not Available</div>`, map the base entity fields to the highest-level owner fields.
+  - DLA CAGE Scraper (`cage_scraper.py`): Input CAGE code -> Search -> Parse Details URI -> Fetch single Details page. Extract base entity and Highest Level Owner info directly from this page (no recursive traversal). If the "Highest Level Owner" block shows `<div>Information not Available</div>`, map the base entity fields to the highest-level owner fields.
   - OpenFIGI: `highest_level_owner_name` -> ticker. **Deterministic Selection Rule:** If OpenFIGI returns multiple tickers for a single Owner Name:
     1. Filter to `securityType = 'Common Stock'`.
     2. Prioritize US exchanges (NYSE, NASDAQ).
@@ -72,7 +72,7 @@ Implement functions that:
 5) Orchestrate (`backend/scripts/enrich.py`)
 - Input: `backend/data/cleaned/cleaned.duckdb`, table `raw_filtered_awards`
 - Steps:
-  - Extract distinct UEIs
+  - Extract distinct CAGE codes
   - Resolve hierarchy via single-pass CAGE scraper + cache + failure backoff logic
   - Resolve tickers and market caps via enrichment clients
   - Join cached enrichments back to produce `enriched_awards` in `backend/data/cleaned/cleaned.duckdb`
@@ -80,5 +80,5 @@ Implement functions that:
 - Append the `last_verified_date` column to the relation using DuckDB's `CURRENT_TIMESTAMP` immediately before persisting
 - Do not compute Phase 4 signal math here (keep it for Phase 4).
 - Output should include all Phase 2 columns defined in the overview: theme_llm, cage_business_name, cage_update_date, is_highest, highest_level_owner_name, highest_level_cage_code, highest_level_cage_update_date, is_public, ticker, market_cap, sector, last_verified_date
-- If the CAGE scraper returns no results (e.g., UEI not found), upsert a row in cache_entity_hierarchy with result_status = 'not_found' and set all other fields to NULL. The cache‑first check must respect this status to avoid re‑scraping.
+- If the CAGE scraper returns no results (e.g., CAGE code not found), upsert a row in cache_entity_hierarchy with result_status = 'not_found' and set all other fields to NULL. The cache‑first check must respect this status to avoid re‑scraping.
 

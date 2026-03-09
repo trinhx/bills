@@ -10,7 +10,7 @@ from backend.src.io import (
     get_cached_market_cap, upsert_cached_market_cap,
     get_failure, upsert_failure
 )
-from backend.src.transform import extract_unique_uei, join_entity_hierarchy, join_openfigi, join_market_cap
+from backend.src.transform import extract_unique_cage_code, join_entity_hierarchy, join_openfigi, join_market_cap
 
 from backend.app.services.providers.cage_scraper import enrich_cage_data, CAGE_HEADERS, CAGE_COOKIES
 from backend.app.services.providers.openfigi import process_owner_name
@@ -48,31 +48,31 @@ def main():
     raw_rel = cl_conn.table("raw_filtered_awards")
     
     # 1. Resolve Hierarchy
-    ueis = extract_unique_uei(raw_rel).fetchall()
-    uei_list = [row[0] for row in ueis if row[0]]
-    logger.info(f"Found {len(uei_list)} unique UEIs to process")
+    cages = extract_unique_cage_code(raw_rel).fetchall()
+    cage_list = [row[0] for row in cages if row[0]]
+    logger.info(f"Found {len(cage_list)} unique CAGE codes to process")
     
-    for uei in uei_list[:5]:
-        if get_cached_entity_hierarchy(ca_conn, uei): continue
-        if is_failure_recent(get_failure(ca_conn, "cage", uei)): continue
+    for cage in cage_list[:5]:
+        if get_cached_entity_hierarchy(ca_conn, cage): continue
+        if is_failure_recent(get_failure(ca_conn, "cage", cage)): continue
         try:
-            res = enrich_cage_data(uei, CAGE_HEADERS, CAGE_COOKIES)
+            res = enrich_cage_data(cage, CAGE_HEADERS, CAGE_COOKIES)
             if res:
-                res["uei"] = uei
+                res["cage_code"] = cage
                 res["result_status"] = "success"
                 res["last_verified"] = datetime.now()
                 upsert_cached_entity_hierarchy(ca_conn, res)
             else:
                 res = {
-                    "uei": uei,
-                    "cage_code": None, "cage_business_name": None, "cage_update_date": None,
+                    "cage_code": cage,
+                    "cage_business_name": None, "cage_update_date": None,
                     "is_highest": None, "highest_level_owner_name": None, "highest_level_cage_code": None,
                     "highest_level_cage_update_date": None, "result_status": "not_found",
                     "last_verified": datetime.now()
                 }
                 upsert_cached_entity_hierarchy(ca_conn, res)
         except Exception as e:
-            upsert_failure(ca_conn, "cage", uei, type(e).__name__, getattr(e, "status_code", 500), str(e), getattr(e, "retry_after", 0), 5)
+            upsert_failure(ca_conn, "cage", cage, type(e).__name__, getattr(e, "status_code", 500), str(e), getattr(e, "retry_after", 0), 5)
             
     # Prepare relation for next step
     cl_conn.execute("ATTACH 'backend/data/cache/cache.duckdb' AS cache")

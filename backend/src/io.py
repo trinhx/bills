@@ -32,8 +32,7 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
     """Create cache tables if they do not exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cache_entity_hierarchy (
-            uei TEXT PRIMARY KEY,
-            cage_code TEXT,
+            cage_code TEXT PRIMARY KEY,
             cage_business_name TEXT,
             cage_update_date DATE,
             is_highest BOOLEAN,
@@ -83,8 +82,8 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
 
 # Helper IO methods for Phase 2 Cache Access
 
-def get_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, uei: str) -> dict | None:
-    res = conn.execute("SELECT * FROM cache_entity_hierarchy WHERE uei = ?", [uei]).fetchone()
+def get_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, cage_code: str) -> dict | None:
+    res = conn.execute("SELECT * FROM cache_entity_hierarchy WHERE cage_code = ?", [cage_code]).fetchone()
     if res:
         cols = [desc[0] for desc in conn.description]
         return dict(zip(cols, res))
@@ -93,11 +92,11 @@ def get_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, uei: str) -> di
 def upsert_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, data: dict) -> None:
     keys = list(data.keys())
     placeholders = ", ".join(["?"] * len(keys))
-    updates = ", ".join([f"{k}=EXCLUDED.{k}" for k in keys if k != 'uei'])
+    updates = ", ".join([f"{k}=EXCLUDED.{k}" for k in keys if k != 'cage_code'])
     sql = f"""
         INSERT INTO cache_entity_hierarchy ({", ".join(keys)})
         VALUES ({placeholders})
-        ON CONFLICT(uei) DO UPDATE SET {updates}
+        ON CONFLICT(cage_code) DO UPDATE SET {updates}
     """
     conn.execute(sql, list(data.values()))
 

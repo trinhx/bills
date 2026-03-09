@@ -47,17 +47,17 @@ def filter_and_select_phase1(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRel
 
 # --- Phase 2 Pure Transforms ---
 
-def extract_unique_uei(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
-    """Extract distinct UEIs from the phase 1 filtered awards."""
-    return rel.aggregate("recipient_parent_uei").filter("recipient_parent_uei IS NOT NULL")
+def extract_unique_cage_code(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
+    """Extract distinct cage codes from the phase 1 filtered awards."""
+    return rel.aggregate("cage_code").filter("cage_code IS NOT NULL")
 
 def join_entity_hierarchy(rel: duckdb.DuckDBPyRelation, hierarchy_rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """
     Left join the raw awards relation with the cached entity hierarchy results.
-    We join on recipient_parent_uei = uei.
+    We join on cage_code.
     """
     # Expose necessary columns and avoid duplicates
-    joined = rel.join(hierarchy_rel, rel.recipient_parent_uei == hierarchy_rel.uei, "left")
+    joined = rel.join(hierarchy_rel, "cage_code", "left")
     return joined
 
 def join_openfigi(rel: duckdb.DuckDBPyRelation, ticker_rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:

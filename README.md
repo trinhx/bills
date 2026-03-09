@@ -9,45 +9,44 @@ At a high level, it:
 - Enriches awards with market context (e.g., market cap at award date).
 - Generates quantitative signals to support research and downstream analysis.
 
-## Why this exists
+## Running the Pipeline
 
-Government contracting can act as a real-world indicator of demand and budget allocation. This pipeline makes those award flows queryable and comparable to public market fundamentals, so you can rank companies and themes by award momentum relative to size.
+The pipeline is organized into four sequential phases. Run each phase from the root of the repository. Make sure to set `PYTHONPATH=.` so python can locate the `backend` module.
 
-## What it does (phases)
+### 1. Phase 1: Ingestion
+Efficiently reads, filters, and processes large raw CSV data drops, creating a cleaned base dataset.
+```bash
+export PYTHONPATH=.
+uv run backend/scripts/ingest.py --csv backend/data/raw/contracts/FY2024_All_Contracts_Full_20260207_1.csv
+```
 
-The backend pipeline is organized into four phases:
+### 2. Phase 2: Enrichment
+Pulls unique entity identifiers (UEIs) from the ingestion phase, resolving them to parent companies (CAGE Scraper), mapping to publicly traded tickers (OpenFIGI), and pulling historical market caps (Yahoo Finance).
+```bash
+export PYTHONPATH=.
+uv run backend/scripts/enrich.py
+```
 
-1) Data Ingestion
-- Efficiently reads and filters large CSV drops.
-- Produces a cleaned, queryable base dataset.
+### 3. Phase 3: Theme Intelligence
+Merges NAICS and PSC external lookup CSVs to append plain-text descriptions and build the standard `deliverable` mappings.
+```bash
+export PYTHONPATH=.
+uv run backend/scripts/themes.py
+```
 
-2) Data Processing & Enrichment
-- Resolves contractor identifiers to ultimate parent entities and tradable tickers.
-- Enriches transactions with market and company metadata.
-- Uses persistent caching to minimize repeated API calls.
+### 4. Phase 4: Signal Generation
+Computes the final alpha ratio mathematical indicators natively and exports the quantitative dataset directly to a CSV file.
+```bash
+export PYTHONPATH=.
+uv run backend/scripts/signals.py --output backend/data/results/final_signals.csv
+```
 
-3) Theme Intelligence
-- Classifies awards by themes/sectors using NAICS and product/service codes.
-- Enables aggregated views of contracting activity by theme.
-
-4) Signal Generation
-- Computes actionable signals (including raw and ACV-based ratios).
-- Produces a results dataset suitable for quantitative research, ranking, and alerting.
-
-## Core design goals
-
-- Performance on large datasets: Designed to process multi-GB CSV drops without loading everything into memory.
-- Deterministic + testable: Data logic is structured to be reliable and verifiable before scaling up.
-- Resilient enrichment: External API calls are rate-limited, retried safely, and cached to avoid rework.
-- Clear separation of concerns: Ingestion, enrichment, classification, and signal computation are built as independent phases.
-
-## Outputs
-
-The pipeline produces:
-- Cleaned intermediate datasets (phase outputs).
-- A final results dataset containing enriched award records and computed alpha signals.
-
-## How to work on this project
-
-This repo is designed to be implemented and validated phase-by-phase. Complete and verify a phase before moving on to the next one to avoid compounding errors across the pipeline.
-
+### Run All Phases Sequentially
+You can chain them together to execute one after the other. It will stop if any phase fails.
+```bash
+export PYTHONPATH=. && \
+uv run backend/scripts/ingest.py --csv backend/data/raw/contracts/FY2024_All_Contracts_Full_20260207_1.csv && \
+uv run backend/scripts/enrich.py && \
+uv run backend/scripts/themes.py && \
+uv run backend/scripts/signals.py --output backend/data/results/FY2024_All_Contracts_Full_20260207_1_final_signals.csv
+```
