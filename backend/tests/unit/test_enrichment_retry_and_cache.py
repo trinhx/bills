@@ -97,6 +97,7 @@ def test_cage_scraper_parsing():
 
 def test_duckdb_cache_upsert():
     conn = duckdb.connect(':memory:')
+    conn.execute("ATTACH ':memory:' AS cache;")
     ensure_cache_tables(conn)
     
     data1 = {
@@ -113,11 +114,11 @@ def test_duckdb_cache_upsert():
     }
     upsert_cached_entity_hierarchy(conn, data1)
     
-    fetched = get_cached_entity_hierarchy(conn, "UEI1")
+    fetched = get_cached_entity_hierarchy(conn, "C1")
     assert fetched["cage_code"] == "C1"
     
     # Upsert with update
-    data1["cage_code"] = "C2"
+    data1["cage_business_name"] = "N2"
     upsert_cached_entity_hierarchy(conn, data1)
-    fetched2 = get_cached_entity_hierarchy(conn, "UEI1")
-    assert fetched2["cage_code"] == "C2"
+    fetched2 = get_cached_entity_hierarchy(conn, "C1")
+    assert fetched2["cage_business_name"] == "N2"

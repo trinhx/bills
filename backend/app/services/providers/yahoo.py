@@ -29,10 +29,11 @@ def fetch_yahoo_data(ticker: str, action_date: str) -> Optional[Dict[str, Any]]:
         # sharesOutstanding might not exist for some instruments
         shares_outstanding = info.get('sharesOutstanding', None)
         sector = info.get('sector', 'UNKNOWN')
+        industry = info.get('industry', 'UNKNOWN')
         
         if not shares_outstanding:
             logger.warning(f"No sharesOutstanding found for {ticker}")
-            return {"market_cap": None, "sector": sector}
+            return {"market_cap": None, "sector": sector, "industry": industry}
             
         # Parse action_date
         target_dt = pd.to_datetime(action_date).tz_localize(None)
@@ -45,7 +46,7 @@ def fetch_yahoo_data(ticker: str, action_date: str) -> Optional[Dict[str, Any]]:
         
         if hist.empty:
             logger.warning(f"No history found for {ticker} near {action_date}")
-            return {"market_cap": None, "sector": sector}
+            return {"market_cap": None, "sector": sector, "industry": industry}
             
         # Filter to dates <= target_dt
         hist.index = hist.index.tz_localize(None)
@@ -53,7 +54,7 @@ def fetch_yahoo_data(ticker: str, action_date: str) -> Optional[Dict[str, Any]]:
         
         if valid_history.empty:
             logger.warning(f"No history <= {action_date} found for {ticker}")
-            return {"market_cap": None, "sector": sector}
+            return {"market_cap": None, "sector": sector, "industry": industry}
             
         # Get the closest prior trading day (last row of valid_history)
         closest_row = valid_history.iloc[-1]
@@ -61,10 +62,13 @@ def fetch_yahoo_data(ticker: str, action_date: str) -> Optional[Dict[str, Any]]:
         
         market_cap = historical_close * shares_outstanding
         
-        return {
+        result = {
             "market_cap": float(market_cap),
-            "sector": sector
+            "sector": sector,
+            "industry": industry
         }
+        logger.debug(f"Extracted Yahoo fields for {ticker}: {result}")
+        return result
     except Exception as e:
         logger.error(f"Error fetching Yahoo Finance data for {ticker}: {e}")
         # Reraise so @with_retry can handle it for explicit rate limiting errors, 

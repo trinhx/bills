@@ -41,6 +41,7 @@ class EnrichedAward(BaseAward):
     ticker: Optional[str]
     market_cap: Optional[float]
     sector: Optional[str]
+    industry: Optional[str]
     last_verified_date: Optional[date]
     theme_llm: Optional[str]
 

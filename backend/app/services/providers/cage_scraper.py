@@ -57,14 +57,43 @@ from datetime import datetime
 from typing import Dict, Optional, Any
 from bs4 import BeautifulSoup
 import requests
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- Configuration & Credentials ---
 # In production, ensure these are loaded via your core config management
 BASE_URL = "https://cage.dla.mil"
 
+import sys
+
 # Environment variables for session management
-SESSION_COOKIE = os.getenv("CAGE_PHPSESS", "23bgwoitjnuj0gdzideqk2gj")
-VERIFICATION_TOKEN = os.getenv("CAGE_VERIFICATION_TOKEN", "PTB5Y...")
+SESSION_COOKIE = os.getenv("CAGE_PHPSESS")
+VERIFICATION_TOKEN = os.getenv("CAGE_VERIFICATION_TOKEN")
+
+
+def _validate_credentials() -> None:
+    """Validate CAGE credentials at runtime (not at import time)."""
+    if not SESSION_COOKIE or not VERIFICATION_TOKEN:
+        print("\n[!] ERROR: Missing CAGE scraper credentials.")
+        print("    Please set CAGE_PHPSESS and CAGE_VERIFICATION_TOKEN in your .env file.")
+        sys.exit(1)
+
+    try:
+        _test_cookies = {
+            "PHPSESS": SESSION_COOKIE,
+            "__RequestVerificationToken": VERIFICATION_TOKEN,
+            "agree": "True",
+        }
+        _test_response = requests.get(f"{BASE_URL}/Search/Results?q=test&page=1", cookies=_test_cookies, timeout=10)
+        _test_response.raise_for_status()
+        if "agree" in _test_response.url.lower() or "verifying your identity" in _test_response.text.lower() or "Access Denied" in _test_response.text:
+            print("\n[!] ERROR: CAGE session is invalid, expired, or blocked.")
+            print("    Please capture fresh CAGE_PHPSESS and CAGE_VERIFICATION_TOKEN values from your browser and update the .env file.")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[!] ERROR: Network failure when validating CAGE scraper access: {e}")
+        sys.exit(1)
 
 CAGE_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -192,7 +221,7 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
                         hdate_label.find_next_sibling("span").get_text(strip=True)
                     )
 
-    return {
+    result = {
         "cage_business_name": cage_business_name,
         "cage_update_date": cage_update_date,
         "is_highest": is_highest,
@@ -200,6 +229,9 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
         "highest_level_cage_code": highest_level_cage_code,
         "highest_level_cage_update_date": highest_level_cage_update_date,
     }
+    
+    logger.debug(f"Extracted CAGE fields: {result}")
+    return result
 
 
 # --- Side-Effect Functions (HTTP Requests) ---
@@ -207,7 +239,8 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
 
 def fetch_html(session: requests.Session, url: str) -> str:
     """Executes HTTP GET request and returns HTML text."""
-    response = session.get(url, timeout=0.01)
+    logger.debug(f"CAGE API Request: GET {url}")
+    response = session.get(url, timeout=10)
     response.raise_for_status()
     return response.text
 

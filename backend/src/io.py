@@ -5,7 +5,9 @@ from datetime import datetime
 def get_cleaned_conn(db_path: str = "backend/data/cleaned/cleaned.duckdb") -> duckdb.DuckDBPyConnection:
     """Open connection to the cleaned DuckDB database."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(db_path)
+    conn = duckdb.connect(db_path)
+    conn.execute("SET wal_autocheckpoint='1000MB';")
+    return conn
 
 def scan_contracts_csv(conn: duckdb.DuckDBPyConnection, csv_path: str) -> duckdb.DuckDBPyRelation:
     """Lazily scan contracts CSV using duckdb."""
@@ -31,7 +33,7 @@ def get_cache_conn(db_path: str = "backend/data/cache/cache.duckdb") -> duckdb.D
 def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
     """Create cache tables if they do not exist."""
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS cache_entity_hierarchy (
+        CREATE TABLE IF NOT EXISTS cache.cache_entity_hierarchy (
             cage_code TEXT PRIMARY KEY,
             cage_business_name TEXT,
             cage_update_date DATE,
@@ -44,7 +46,7 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS cache_openfigi_ticker (
+        CREATE TABLE IF NOT EXISTS cache.cache_openfigi_ticker (
             highest_level_owner_name TEXT PRIMARY KEY,
             ticker TEXT,
             exchange TEXT,
@@ -55,11 +57,12 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS cache_market_cap (
+        CREATE TABLE IF NOT EXISTS cache.cache_market_cap (
             ticker TEXT,
             date DATE,
             market_cap DOUBLE,
             sector TEXT,
+            industry TEXT,
             fetched_at TIMESTAMP,
             source_payload_hash TEXT,
             status TEXT,
@@ -67,7 +70,7 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS cache_failures (
+        CREATE TABLE IF NOT EXISTS cache.cache_failures (
             provider TEXT,
             key TEXT,
             error_type TEXT,
@@ -83,25 +86,31 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
 # Helper IO methods for Phase 2 Cache Access
 
 def get_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, cage_code: str) -> dict | None:
-    res = conn.execute("SELECT * FROM cache_entity_hierarchy WHERE cage_code = ?", [cage_code]).fetchone()
+    res = conn.execute("SELECT * FROM cache.cache_entity_hierarchy WHERE cage_code = ?", [cage_code]).fetchone()
     if res:
         cols = [desc[0] for desc in conn.description]
         return dict(zip(cols, res))
     return None
 
 def upsert_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, data: dict) -> None:
+    _columns = {
+        "cage_code", "cage_business_name", "cage_update_date", "is_highest",
+        "highest_level_owner_name", "highest_level_cage_code",
+        "highest_level_cage_update_date", "result_status", "last_verified",
+    }
+    data = {k: v for k, v in data.items() if k in _columns}
     keys = list(data.keys())
     placeholders = ", ".join(["?"] * len(keys))
     updates = ", ".join([f"{k}=EXCLUDED.{k}" for k in keys if k != 'cage_code'])
     sql = f"""
-        INSERT INTO cache_entity_hierarchy ({", ".join(keys)})
+        INSERT INTO cache.cache_entity_hierarchy ({", ".join(keys)})
         VALUES ({placeholders})
         ON CONFLICT(cage_code) DO UPDATE SET {updates}
     """
     conn.execute(sql, list(data.values()))
 
 def get_cached_openfigi_ticker(conn: duckdb.DuckDBPyConnection, owner_name: str) -> dict | None:
-    res = conn.execute("SELECT * FROM cache_openfigi_ticker WHERE highest_level_owner_name = ?", [owner_name]).fetchone()
+    res = conn.execute("SELECT * FROM cache.cache_openfigi_ticker WHERE highest_level_owner_name = ?", [owner_name]).fetchone()
     if res:
         cols = [desc[0] for desc in conn.description]
         return dict(zip(cols, res))
@@ -112,14 +121,14 @@ def upsert_cached_openfigi_ticker(conn: duckdb.DuckDBPyConnection, data: dict) -
     placeholders = ", ".join(["?"] * len(keys))
     updates = ", ".join([f"{k}=EXCLUDED.{k}" for k in keys if k != 'highest_level_owner_name'])
     sql = f"""
-        INSERT INTO cache_openfigi_ticker ({", ".join(keys)})
+        INSERT INTO cache.cache_openfigi_ticker ({", ".join(keys)})
         VALUES ({placeholders})
         ON CONFLICT(highest_level_owner_name) DO UPDATE SET {updates}
     """
     conn.execute(sql, list(data.values()))
 
 def get_cached_market_cap(conn: duckdb.DuckDBPyConnection, ticker: str, date_val: str) -> dict | None:
-    res = conn.execute("SELECT * FROM cache_market_cap WHERE ticker = ? AND date = ?", [ticker, date_val]).fetchone()
+    res = conn.execute("SELECT * FROM cache.cache_market_cap WHERE ticker = ? AND date = ?", [ticker, date_val]).fetchone()
     if res:
         cols = [desc[0] for desc in conn.description]
         return dict(zip(cols, res))
@@ -130,14 +139,14 @@ def upsert_cached_market_cap(conn: duckdb.DuckDBPyConnection, data: dict) -> Non
     placeholders = ", ".join(["?"] * len(keys))
     updates = ", ".join([f"{k}=EXCLUDED.{k}" for k in keys if k not in ('ticker', 'date')])
     sql = f"""
-        INSERT INTO cache_market_cap ({", ".join(keys)})
+        INSERT INTO cache.cache_market_cap ({", ".join(keys)})
         VALUES ({placeholders})
         ON CONFLICT(ticker, date) DO UPDATE SET {updates}
     """
     conn.execute(sql, list(data.values()))
 
 def get_failure(conn: duckdb.DuckDBPyConnection, provider: str, key: str) -> dict | None:
-    res = conn.execute("SELECT * FROM cache_failures WHERE provider = ? AND key = ?", [provider, key]).fetchone()
+    res = conn.execute("SELECT * FROM cache.cache_failures WHERE provider = ? AND key = ?", [provider, key]).fetchone()
     if res:
         cols = [desc[0] for desc in conn.description]
         return dict(zip(cols, res))
@@ -148,7 +157,7 @@ def upsert_failure(conn: duckdb.DuckDBPyConnection, provider: str, key: str,
                    retry_after_seconds: int, attempts: int) -> None:
     now = datetime.now()
     sql = """
-        INSERT INTO cache_failures 
+        INSERT INTO cache.cache_failures 
         (provider, key, error_type, http_status, message, retry_after_seconds, attempts, last_attempt_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(provider, key) DO UPDATE SET

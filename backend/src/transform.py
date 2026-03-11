@@ -65,15 +65,16 @@ def join_openfigi(rel: duckdb.DuckDBPyRelation, ticker_rel: duckdb.DuckDBPyRelat
     Left join the relation with the OpenFIGI ticker cache.
     We join on highest_level_owner_name = highest_level_owner_name.
     """
-    joined = rel.join(
-        ticker_rel, 
-        rel.highest_level_owner_name == ticker_rel.highest_level_owner_name, 
+    # Alias the relations to prevent ambiguous column names (e.g., highest_level_owner_name)
+    joined = rel.set_alias('l').join(
+        ticker_rel.set_alias('r'), 
+        "l.highest_level_owner_name = r.highest_level_owner_name", 
         "left"
     )
-    # the cache_openfigi_ticker might add a lot of cols. The downstream expects
-    # 'ticker' and we can compute 'is_public' = ticker IS NOT NULL
-    # is_public logic can be handled via SQL or project
-    return joined
+    
+    # We must explicitly project the ticker column from the right table
+    # so that it exists in the output schema!
+    return joined.project('l.*, r.ticker')
     
 def join_market_cap(rel: duckdb.DuckDBPyRelation, mc_rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """

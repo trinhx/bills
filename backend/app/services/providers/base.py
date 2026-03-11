@@ -67,6 +67,10 @@ def with_retry(max_attempts: int = 5, base_delay: float = 1.0, max_delay: float 
                             retry_after = int(e.response.headers['Retry-After'])
                         except ValueError:
                             pass # sometimes it's an HTTP date, we just fallback
+                    
+                    # If it's a 429 and we still have no retry_after, enforce a default 60s cooldown
+                    if status_code == 429 and retry_after == 0:
+                        retry_after = 60
                             
                     if attempts == max_attempts:
                         raise NetworkException(str(e), status_code=status_code, retry_after=retry_after) from e
