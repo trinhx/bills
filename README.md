@@ -82,7 +82,7 @@ backend/data/results/<source_filename>_final_signals.csv
 To check how long it will take to complete running the full pipeline, accounting for API rate limits and existing cache hits, you can run the estimation tool:
 
 ```bash
-uv run --env-file .env backend/scripts/estimate_pipeline.py --csv backend/data/raw/contracts/FY2024_All_Contracts_Full_20260207_1.csv
+uv run --env-file .env backend/scripts/utils/estimate_pipeline.py --csv backend/data/raw/contracts/FY2024_All_Contracts_Full_20260207_1.csv
 ```
 
 **Example Output:**

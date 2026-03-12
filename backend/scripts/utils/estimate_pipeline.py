@@ -3,6 +3,8 @@ import logging
 from pathlib import Path
 import duckdb
 
+import sys
+sys.path.append(".")
 from backend.src.io import get_cleaned_conn, scan_contracts_csv, ensure_cache_tables
 from backend.src.transform import filter_and_select_phase1, extract_unique_cage_code
 
