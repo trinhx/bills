@@ -34,6 +34,7 @@ class EnrichedAward(BaseAward):
     cage_business_name: Optional[str]
     cage_update_date: Optional[date]
     is_highest: Optional[bool]
+    immediate_level_owner: Optional[bool]
     highest_level_owner_name: Optional[str]
     highest_level_cage_code: Optional[str]
     highest_level_cage_update_date: Optional[date]
@@ -51,7 +52,6 @@ class ThemedAward(EnrichedAward):
     naics_keywords: Optional[str]
     psc_name: Optional[str]
     psc_includes: Optional[str]
-    psc_category: Optional[str]
     psc_level_1_category: Optional[str]
     deliverable: Optional[str]
 

@@ -76,3 +76,34 @@ Results are written to:
 ```
 backend/data/results/<source_filename>_final_signals.csv
 ```
+
+## Estimating Pipeline Run Time
+
+To check how long it will take to complete running the full pipeline, accounting for API rate limits and existing cache hits, you can run the estimation tool:
+
+```bash
+uv run --env-file .env backend/scripts/estimate_pipeline.py --csv backend/data/raw/contracts/FY2024_All_Contracts_Full_20260207_1.csv
+```
+
+**Example Output:**
+```
+========================================
+ Pipeline Estimation Tool
+========================================
+Scanning raw dataset...
+CAGE Requests:
+  Total Unique:      6140
+  Pending:           5212
+  Est. Duration:     2.17h
+
+OpenFIGI Requests:
+  Pending (derived): ~5883 (worst-case)
+  Est. Duration:     4.09h
+
+Yahoo Finance Requests:
+  Pending (derived): ~29527 (worst-case)
+  Est. Duration:     8.20h
+========================================
+ Total Est. Duration: 14.46h
+========================================
+```

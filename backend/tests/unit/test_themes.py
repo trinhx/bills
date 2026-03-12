@@ -31,8 +31,8 @@ def test_normalize_naics(memory_db):
     """)
     memory_db.execute("""
         INSERT INTO mock_naics VALUES 
-        ('012345', 'Title1', 'Desc1'),
-        ('123456', 'Title2', 'Desc2')
+        ('012345', 'Title1', 'Desc1 Cross-References.'),
+        ('123456', 'Title2', 'Desc2 Cross-References. Establishments primarily engaged in--')
     """)
     
     rel_awards = memory_db.table("mock_awards")
@@ -77,14 +77,13 @@ def test_normalize_psc_and_deliverable(memory_db):
             psc_code VARCHAR,
             psc_name VARCHAR,
             psc_includes VARCHAR,
-            psc_category VARCHAR,
             psc_level_1_category VARCHAR
         )
     """)
     memory_db.execute("""
         INSERT INTO mock_psc VALUES 
-        ('R499', 'Support', 'Includes support', 'Service', 'Professional Services'),
-        ('R500', 'IT', 'Includes IT', 'Service', NULL)
+        ('R499', 'Support', 'Includes support', 'Professional Services'),
+        ('R500', 'IT', 'Includes IT', NULL)
     """)
     
     rel_awards = memory_db.table("mock_awards_psc")
@@ -94,26 +93,24 @@ def test_normalize_psc_and_deliverable(memory_db):
     res_with_deliverable = derive_deliverable(res_rel)
     results = res_with_deliverable.fetchall()
     
-    # cols: piid, psc_code, name, includes, cat, lvl1_cat, deliverable
+    # cols: piid, psc_code, name, includes, lvl1_cat, deliverable
     res_dict = {row[0]: row for row in results}
     
     # i1: R499 -> level 1 available -> Professional Services
     assert res_dict['i1'][1] == 'R499'
     assert res_dict['i1'][2] == 'Support'
-    assert res_dict['i1'][4] == 'Service'
-    assert res_dict['i1'][5] == 'Professional Services'
-    assert res_dict['i1'][6] == 'Professional Services' # deliverable
+    assert res_dict['i1'][4] == 'Professional Services'
+    assert res_dict['i1'][5] == 'Professional Services' # deliverable
     
-    # i2: R500 -> level 1 NULL -> Service
+    # i2: R500 -> level 1 NULL -> missing lvl1_cat -> deliverable is NULL because psc_category removed
     assert res_dict['i2'][1] == 'R500'
-    assert res_dict['i2'][4] == 'Service'
-    assert res_dict['i2'][5] is None
-    assert res_dict['i2'][6] == 'Service' # deliverable
+    assert res_dict['i2'][4] is None
+    assert res_dict['i2'][5] is None # deliverable fallback removed
     
     # i3: unkn -> UNKN -> no match -> NULL deliverable
     assert res_dict['i3'][1] == 'UNKN'
     assert res_dict['i3'][2] is None
-    assert res_dict['i3'][6] is None # deliverable
+    assert res_dict['i3'][5] is None # deliverable
 
 def test_normalize_naics_keywords(memory_db):
     memory_db.execute("""

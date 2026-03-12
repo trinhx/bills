@@ -176,6 +176,7 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
 
     # 2. Assume Base Entity is Highest Level initially
     is_highest = True
+    immediate_level_owner = False
     highest_level_owner_name = cage_business_name
     highest_level_cage_code = cage_code
     highest_level_cage_update_date = cage_update_date
@@ -220,11 +221,50 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
                     highest_level_cage_update_date = format_date(
                         hdate_label.find_next_sibling("span").get_text(strip=True)
                     )
+            elif data_div:
+                # Highest level owner information is not available. Check for immediate level owner.
+                immediate_header = ownership_div.find(
+                    "div",
+                    class_="subsection_header",
+                    string=re.compile(r"Immediate(?: Level)? Owner", re.IGNORECASE),
+                )
+                if immediate_header:
+                    imm_data_div = immediate_header.find_next_sibling("div", class_="data")
+                    if imm_data_div and not imm_data_div.find(
+                        string=re.compile(r"Information not Available", re.IGNORECASE)
+                    ):
+                        is_highest = False
+                        immediate_level_owner = True
+
+                        name_label = imm_data_div.find(
+                            "label", string=re.compile(r"Company Name", re.IGNORECASE)
+                        )
+                        if name_label and name_label.find_next_sibling("span"):
+                            highest_level_owner_name = name_label.find_next_sibling(
+                                "span"
+                            ).get_text(strip=True)
+
+                        hcage_label = imm_data_div.find(
+                            "label", string=re.compile(r"^CAGE$", re.IGNORECASE)
+                        )
+                        if hcage_label and hcage_label.find_next_sibling("span"):
+                            highest_level_cage_code = hcage_label.find_next_sibling(
+                                "span"
+                            ).get_text(strip=True)
+
+                        hdate_label = imm_data_div.find(
+                            "label", string=re.compile(r"CAGE Last Updated", re.IGNORECASE)
+                        )
+                        if hdate_label and hdate_label.find_next_sibling("span"):
+                            highest_level_cage_update_date = format_date(
+                                hdate_label.find_next_sibling("span").get_text(strip=True)
+                            )
 
     result = {
         "cage_business_name": cage_business_name,
         "cage_update_date": cage_update_date,
         "is_highest": is_highest,
+        "immediate_level_owner": immediate_level_owner,
         "highest_level_owner_name": highest_level_owner_name,
         "highest_level_cage_code": highest_level_cage_code,
         "highest_level_cage_update_date": highest_level_cage_update_date,

@@ -79,7 +79,8 @@ def main():
                 res = {
                     "cage_code": cage,
                     "cage_business_name": None, "cage_update_date": None,
-                    "is_highest": None, "highest_level_owner_name": None, "highest_level_cage_code": None,
+                    "is_highest": None, "immediate_level_owner": None,
+                    "highest_level_owner_name": None, "highest_level_cage_code": None,
                     "highest_level_cage_update_date": None, "result_status": "not_found",
                     "last_verified": datetime.now()
                 }

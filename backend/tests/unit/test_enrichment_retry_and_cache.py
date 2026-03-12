@@ -92,8 +92,38 @@ def test_cage_scraper_parsing():
     assert res["cage_business_name"] == "TEST CORP"
     assert res["cage_update_date"] == "2023-01-15"
     assert res["is_highest"] is False
+    assert res["immediate_level_owner"] is False
     assert res["highest_level_owner_name"] == "PARENT CORP"
     assert res["highest_level_cage_code"] == "67890"
+
+def test_cage_scraper_parsing_immediate_owner():
+    html = """
+    <table class="detail-table">
+        <tr><td class="detail-left-col">Legal Business Name</td><td class="detail-right-col">TEST CORP</td></tr>
+    </table>
+    <div id="detail_topsection">
+        <label>CAGE</label><span>12345</span>
+        <label>CAGE Update Date</label><span>01/15/2023</span>
+    </div>
+    <div id="ownership">
+        <div class="subsection_header">Highest Level Owner</div>
+        <div class="data">
+            Information not Available
+        </div>
+        <div class="subsection_header">Immediate Owner</div>
+        <div class="data">
+            <label>Company Name</label><span>IMMED CORP</span>
+            <label>CAGE</label><span>67891</span>
+            <label>CAGE Last Updated</label><span>02/21/2023</span>
+        </div>
+    </div>
+    """
+    res = parse_cage_details(html)
+    assert res["cage_business_name"] == "TEST CORP"
+    assert res["is_highest"] is False
+    assert res["immediate_level_owner"] is True
+    assert res["highest_level_owner_name"] == "IMMED CORP"
+    assert res["highest_level_cage_code"] == "67891"
 
 def test_duckdb_cache_upsert():
     conn = duckdb.connect(':memory:')
@@ -106,6 +136,7 @@ def test_duckdb_cache_upsert():
         "cage_business_name": "N1",
         "cage_update_date": None,
         "is_highest": True,
+        "immediate_level_owner": False,
         "highest_level_owner_name": "N1",
         "highest_level_cage_code": "C1",
         "highest_level_cage_update_date": None,

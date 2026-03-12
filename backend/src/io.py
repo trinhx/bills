@@ -38,6 +38,7 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
             cage_business_name TEXT,
             cage_update_date DATE,
             is_highest BOOLEAN,
+            immediate_level_owner BOOLEAN,
             highest_level_owner_name TEXT,
             highest_level_cage_code TEXT,
             highest_level_cage_update_date DATE,
@@ -45,6 +46,10 @@ def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:
             last_verified TIMESTAMP
         )
     """)
+    try:
+        conn.execute("ALTER TABLE cache.cache_entity_hierarchy ADD COLUMN IF NOT EXISTS immediate_level_owner BOOLEAN")
+    except duckdb.BinderException:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cache.cache_openfigi_ticker (
             highest_level_owner_name TEXT PRIMARY KEY,
@@ -94,7 +99,7 @@ def get_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, cage_code: str)
 
 def upsert_cached_entity_hierarchy(conn: duckdb.DuckDBPyConnection, data: dict) -> None:
     _columns = {
-        "cage_code", "cage_business_name", "cage_update_date", "is_highest",
+        "cage_code", "cage_business_name", "cage_update_date", "is_highest", "immediate_level_owner",
         "highest_level_owner_name", "highest_level_cage_code",
         "highest_level_cage_update_date", "result_status", "last_verified",
     }

@@ -103,7 +103,17 @@ def normalize_naics(rel: duckdb.DuckDBPyRelation, naics_lookup_rel: duckdb.DuckD
         "l.naics_code = r.naics_code",
         "left"
     )
-    return joined.project('l.*, r.naics_title, r.naics_description')
+    projection = """
+        l.*,
+        r.naics_title,
+        TRIM(
+            REPLACE(
+                REPLACE(r.naics_description, 'Cross-References. Establishments primarily engaged in--', ''),
+                'Cross-References.', ''
+            )
+        ) AS naics_description_1
+    """
+    return joined.project(projection)
 
 def normalize_naics_keywords(rel: duckdb.DuckDBPyRelation, naics_kw_lookup_rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """
@@ -135,13 +145,13 @@ def normalize_psc(rel: duckdb.DuckDBPyRelation, psc_lookup_rel: duckdb.DuckDBPyR
         "l.product_or_service_code = r.psc_code",
         "left"
     )
-    return joined.project('l.*, r.psc_name, r.psc_includes, r.psc_category, r.psc_level_1_category')
+    return joined.project('l.*, r.psc_name, r.psc_includes, r.psc_level_1_category')
 
 def derive_deliverable(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """
-    Derive deliverable column: COALESCE(psc_level_1_category, psc_category).
+    Derive deliverable column: psc_level_1_category.
     """
-    proj_expr = "*, COALESCE(psc_level_1_category, psc_category) AS deliverable"
+    proj_expr = "*, psc_level_1_category AS deliverable"
     return rel.project(proj_expr)
 
 # --- Phase 4 Pure Transforms ---
