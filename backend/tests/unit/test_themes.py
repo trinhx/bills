@@ -1,6 +1,6 @@
 import pytest
 import duckdb
-from backend.src.transform import normalize_naics, normalize_psc, derive_deliverable
+from backend.src.transform import normalize_naics, normalize_naics_keywords, normalize_psc, derive_deliverable
 
 @pytest.fixture
 def memory_db():
@@ -114,3 +114,52 @@ def test_normalize_psc_and_deliverable(memory_db):
     assert res_dict['i3'][1] == 'UNKN'
     assert res_dict['i3'][2] is None
     assert res_dict['i3'][6] is None # deliverable
+
+def test_normalize_naics_keywords(memory_db):
+    memory_db.execute("""
+        CREATE TABLE mock_awards_kw (
+            award_id_piid VARCHAR,
+            naics_code VARCHAR
+        )
+    """)
+    memory_db.execute("""
+        INSERT INTO mock_awards_kw VALUES 
+        ('id1', '012345'),
+        ('id2', '123456'),
+        ('id3', NULL)
+    """)
+    
+    memory_db.execute("""
+        CREATE TABLE mock_naics_kw (
+            "2022 NAICS Code" VARCHAR,
+            "2022 NAICS Title" VARCHAR,
+            "2022 NAICS Keywords" VARCHAR
+        )
+    """)
+    memory_db.execute("""
+        INSERT INTO mock_naics_kw VALUES 
+        ('012345', 'Title1', 'Keyword A'),
+        ('012345', 'Title1', 'Keyword B'),
+        ('123456', 'Title2', 'Keyword C')
+    """)
+    
+    rel_awards = memory_db.table("mock_awards_kw")
+    rel_kw = memory_db.table("mock_naics_kw")
+    
+    res_rel = normalize_naics_keywords(rel_awards, rel_kw)
+    results = res_rel.fetchall()
+    
+    res_dict = {row[0]: row for row in results}
+    
+    # id1: 012345 -> two keywords aggregated
+    kw1 = res_dict['id1'][2]
+    assert 'Keyword A' in kw1
+    assert 'Keyword B' in kw1
+    assert '; ' in kw1
+    
+    # id2: 123456 -> single keyword
+    assert res_dict['id2'][2] == 'Keyword C'
+    
+    # id3: NULL naics_code -> NULL keywords
+    assert res_dict['id3'][2] is None
+

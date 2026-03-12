@@ -206,5 +206,6 @@ def test_end_to_end_pipeline(mock_rate_limiter, mock_sleep, mock_rget, mock_rpos
     # Check that standard fields are present
     assert "contract_transaction_unique_key" in df.columns
     assert "market_cap" in df.columns
+    assert "naics_keywords" in df.columns
     assert "alpha_ratio" in df.columns
     assert "acv_signal" in df.columns

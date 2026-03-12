@@ -32,9 +32,9 @@ def setup_logging(debug=False):
 def is_failure_recent(failure: dict) -> bool:
     if not failure: return False
     retry_after = failure.get("retry_after_seconds", 3600)
-    # Default backoff is 1 hour if no retry-after was provided
+    # Default backoff is 10 seconds if no retry-after was provided
     if retry_after == 0:
-        retry_after = 1800  # Default backoff is 30 minutes if no retry-after was provided
+        retry_after = 10  # Default backoff is 10s if no retry-after was provided
     last_attempt = failure.get("last_attempt_at")
     if not last_attempt: return False
     

@@ -48,6 +48,7 @@ class EnrichedAward(BaseAward):
 @dataclass
 class ThemedAward(EnrichedAward):
     naics_title: Optional[str]
+    naics_keywords: Optional[str]
     psc_name: Optional[str]
     psc_includes: Optional[str]
     psc_category: Optional[str]

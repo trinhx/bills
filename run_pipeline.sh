@@ -76,7 +76,7 @@ fi
 
 # ── Run pipeline ──────────────────────────────────────────────────────────────
 export PYTHONPATH=.
-BACKOFF_SECONDS=1800  # 30 minutes — matches the failure backoff in enrich.py
+BACKOFF_SECONDS=10  # 10 seconds — user specified
 
 echo "[pipeline] Starting Phase 1: Ingestion"
 echo "[pipeline] Source: $SOURCE_DATASET"
@@ -99,7 +99,7 @@ try:
     result = conn.execute('''
         SELECT COUNT(*) FROM cache_failures
         WHERE provider = 'openfigi'
-          AND (retry_after_seconds = 0 OR last_attempt_at + INTERVAL (COALESCE(retry_after_seconds, 1800)) SECOND > now())
+          AND last_attempt_at + INTERVAL (COALESCE(NULLIF(retry_after_seconds, 0), 10)) SECOND > now()
     ''').fetchone()
     conn.close()
     print(result[0])
@@ -113,10 +113,10 @@ except Exception:
     fi
 
     echo "[pipeline] $PENDING failure(s) still within backoff window."
-    echo "[pipeline] Waiting 30 minutes before retrying..."
-    for i in $(seq $BACKOFF_SECONDS -60 1); do
+    echo "[pipeline] Waiting 10 seconds before retrying..."
+    for i in $(seq $BACKOFF_SECONDS -1 1); do
         printf "\r[pipeline] Next retry in %dm %ds ...  " $((i / 60)) $((i % 60))
-        sleep 60
+        sleep 1
     done
     echo ""
     ENRICH_PASS=$((ENRICH_PASS + 1))

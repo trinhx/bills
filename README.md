@@ -26,7 +26,7 @@ Pulls unique entity identifiers (UEIs) from the ingestion phase, resolving them 
 **How Rate Limits and Caching Works (e.g., OpenFIGI)**
 To respect API rate limits and improve performance, the enrichment phase heavily utilizes a persistent local DuckDB cache (`backend/data/cache/cache.duckdb`).
 - **Cache-First Check**: Before making any external network request, the pipeline checks if a successful response for that specific input (like an OpenFIGI owner name) already exists in the local cache. If found, it uses the cached data and skips the API call entirely.
-- **Failure & Backoff Cache**: If an API call previously failed (e.g., a 429 Rate Limit error), the failure is also cached along with a cooldown window. The pipeline will skip retrying that exact entity until the backoff period expires.
+- **Failure & Backoff Cache**: If an API call previously failed (e.g., a 500 error), the failure is also cached along with a short 10-second cooldown window. The pipeline will wait 10 seconds and automatically retry any failures as part of the phase's built-in loop.
 - **Resuming with New Data**: When loading a new or subsequent CSV file via `run_pipeline.sh`, the pipeline will automatically reuse the existing cache file. This ensures it instantly resolves any companies it has seen in previous runs without consuming precious API rate limits.
 
 ```bash

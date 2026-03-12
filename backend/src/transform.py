@@ -105,6 +105,23 @@ def normalize_naics(rel: duckdb.DuckDBPyRelation, naics_lookup_rel: duckdb.DuckD
     )
     return joined.project('l.*, r.naics_title, r.naics_description')
 
+def normalize_naics_keywords(rel: duckdb.DuckDBPyRelation, naics_kw_lookup_rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
+    """
+    Aggregate NAICS keywords per code and left join to append naics_keywords.
+    The lookup CSV has multiple keyword rows per NAICS code; we combine them
+    with STRING_AGG to produce a single semicolon-delimited string per code.
+    """
+    agg = naics_kw_lookup_rel.project(
+        '"2022 NAICS Code" AS naics_code, "2022 NAICS Keywords" AS kw'
+    ).aggregate("naics_code, STRING_AGG(kw, '; ') AS naics_keywords")
+
+    joined = rel.set_alias('l').join(
+        agg.set_alias('r'),
+        "l.naics_code = r.naics_code",
+        "left"
+    )
+    return joined.project('l.*, r.naics_keywords')
+
 def normalize_psc(rel: duckdb.DuckDBPyRelation, psc_lookup_rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """
     Ensure product_or_service_code is formatted cleanly.
