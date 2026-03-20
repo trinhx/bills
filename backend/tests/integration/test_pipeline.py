@@ -11,10 +11,10 @@ from backend.scripts.themes import main as themes_main
 from backend.scripts.signals import main as signals_main
 
 # A small mock dataset representing three scenarios
-MOCK_CSV_CONTENT = """contract_transaction_unique_key,award_id_piid,federal_action_obligation,total_dollars_obligated,current_total_value_of_award,potential_total_value_of_award,action_date,solicitation_date,period_of_performance_start_date,period_of_performance_current_end_date,awarding_agency_name,awarding_sub_agency_name,cage_code,recipient_parent_uei,recipient_parent_name,recipient_parent_name_raw,product_or_service_code,product_or_service_code_description,naics_code,naics_description,number_of_offers_received,transaction_description,award_type,extra_ignored_column
-txn_happy,piid_happy,100.0,6000000.0,,,2023-01-05,,,,,Agency,Sub,CAGE_HAPPY,UEI_HAPPY,HAPPY PARENT CORP,HAPPY PARENT CORP,D302,IT AND TELECOM,541512,COMPUTER SYSTEMS DESIGN SERVICES,1,Desc,DEFINITIVE CONTRACT,extra
-txn_429,piid_429,100.0,6000000.0,,,2023-01-05,,,,,Agency,Sub,CAGE_RETRY,UEI_RETRY,RETRY PARENT CORP,RETRY PARENT CORP,D302,IT AND TELECOM,541512,COMPUTER SYSTEMS DESIGN SERVICES,1,Desc,DEFINITIVE CONTRACT,extra
-txn_nocage,piid_nocage,100.0,6000000.0,,,2023-01-05,,,,,Agency,Sub,CAGE_NOPARENT,UEI_NOPARENT,NOPARENT CORP,NOPARENT CORP,D302,IT AND TELECOM,541512,COMPUTER SYSTEMS DESIGN SERVICES,1,Desc,DEFINITIVE CONTRACT,extra
+MOCK_CSV_CONTENT = """contract_transaction_unique_key,award_id_piid,parent_award_id_piid,federal_action_obligation,total_dollars_obligated,current_total_value_of_award,potential_total_value_of_award,action_date,solicitation_date,period_of_performance_start_date,period_of_performance_current_end_date,awarding_agency_name,awarding_sub_agency_name,cage_code,recipient_parent_uei,recipient_parent_name,recipient_parent_name_raw,product_or_service_code,product_or_service_code_description,naics_code,naics_description,number_of_offers_received,transaction_description,award_type,extra_ignored_column
+txn_happy,piid_happy,,100.0,6000000.0,,,2023-01-05,,,,,Agency,Sub,CAGE_HAPPY,UEI_HAPPY,HAPPY PARENT CORP,HAPPY PARENT CORP,D302,IT AND TELECOM,541512,COMPUTER SYSTEMS DESIGN SERVICES,1,Desc,DEFINITIVE CONTRACT,extra
+txn_429,piid_429,,100.0,6000000.0,,,2023-01-05,,,,,Agency,Sub,CAGE_RETRY,UEI_RETRY,RETRY PARENT CORP,RETRY PARENT CORP,D302,IT AND TELECOM,541512,COMPUTER SYSTEMS DESIGN SERVICES,1,Desc,DEFINITIVE CONTRACT,extra
+txn_nocage,piid_nocage,,100.0,6000000.0,,,2023-01-05,,,,,Agency,Sub,CAGE_NOPARENT,UEI_NOPARENT,NOPARENT CORP,NOPARENT CORP,D302,IT AND TELECOM,541512,COMPUTER SYSTEMS DESIGN SERVICES,1,Desc,DEFINITIVE CONTRACT,extra
 """
 
 class MockResponse:
@@ -107,7 +107,7 @@ def integration_env(tmp_path):
     # Run Phase 1 Ingestion: Use explicit typing instead of CSV inference to avoid dtype merge conflicts
     conn.execute("""
         CREATE TABLE raw_awards (
-            contract_transaction_unique_key VARCHAR, award_id_piid VARCHAR, federal_action_obligation DOUBLE,
+            contract_transaction_unique_key VARCHAR, award_id_piid VARCHAR, parent_award_id_piid VARCHAR, federal_action_obligation DOUBLE,
             total_dollars_obligated DOUBLE, current_total_value_of_award DOUBLE, potential_total_value_of_award DOUBLE,
             action_date DATE, solicitation_date DATE, period_of_performance_start_date DATE,
             period_of_performance_current_end_date DATE, awarding_agency_name VARCHAR, awarding_sub_agency_name VARCHAR,
@@ -119,9 +119,9 @@ def integration_env(tmp_path):
     """)
     conn.execute("""
         INSERT INTO raw_awards VALUES 
-        ('txn_happy', 'piid_happy', 100.0, 6000000.0, NULL, NULL, '2023-01-05', NULL, NULL, NULL, 'Agency', 'Sub', 'CAGE_HAPPY', 'UEI_HAPPY', 'HAPPY PARENT CORP', 'HAPPY PARENT CORP', 'D302', 'IT AND TELECOM', '541512', 'COMPUTER SYSTEMS DESIGN SERVICES', 1, 'Desc', 'DEFINITIVE CONTRACT', 'extra'),
-        ('txn_429', 'piid_429', 100.0, 6000000.0, NULL, NULL, '2023-01-05', NULL, NULL, NULL, 'Agency', 'Sub', 'CAGE_RETRY', 'UEI_RETRY', 'RETRY PARENT CORP', 'RETRY PARENT CORP', 'D302', 'IT AND TELECOM', '541512', 'COMPUTER SYSTEMS DESIGN SERVICES', 1, 'Desc', 'DEFINITIVE CONTRACT', 'extra'),
-        ('txn_nocage', 'piid_nocage', 100.0, 6000000.0, NULL, NULL, '2023-01-05', NULL, NULL, NULL, 'Agency', 'Sub', 'CAGE_NOPARENT', 'UEI_NOPARENT', 'NOPARENT CORP', 'NOPARENT CORP', 'D302', 'IT AND TELECOM', '541512', 'COMPUTER SYSTEMS DESIGN SERVICES', 1, 'Desc', 'DEFINITIVE CONTRACT', 'extra')
+        ('txn_happy', 'piid_happy', NULL, 100.0, 6000000.0, NULL, NULL, '2023-01-05', NULL, NULL, NULL, 'Agency', 'Sub', 'CAGE_HAPPY', 'UEI_HAPPY', 'HAPPY PARENT CORP', 'HAPPY PARENT CORP', 'D302', 'IT AND TELECOM', '541512', 'COMPUTER SYSTEMS DESIGN SERVICES', 1, 'Desc', 'DEFINITIVE CONTRACT', 'extra'),
+        ('txn_429', 'piid_429', NULL, 100.0, 6000000.0, NULL, NULL, '2023-01-05', NULL, NULL, NULL, 'Agency', 'Sub', 'CAGE_RETRY', 'UEI_RETRY', 'RETRY PARENT CORP', 'RETRY PARENT CORP', 'D302', 'IT AND TELECOM', '541512', 'COMPUTER SYSTEMS DESIGN SERVICES', 1, 'Desc', 'DEFINITIVE CONTRACT', 'extra'),
+        ('txn_nocage', 'piid_nocage', NULL, 100.0, 6000000.0, NULL, NULL, '2023-01-05', NULL, NULL, NULL, 'Agency', 'Sub', 'CAGE_NOPARENT', 'UEI_NOPARENT', 'NOPARENT CORP', 'NOPARENT CORP', 'D302', 'IT AND TELECOM', '541512', 'COMPUTER SYSTEMS DESIGN SERVICES', 1, 'Desc', 'DEFINITIVE CONTRACT', 'extra')
     """)
     rel = conn.table("raw_awards")
     filtered_rel = filter_and_select_phase1(rel)
@@ -207,5 +207,6 @@ def test_end_to_end_pipeline(mock_rate_limiter, mock_sleep, mock_rget, mock_rpos
     assert "contract_transaction_unique_key" in df.columns
     assert "market_cap" in df.columns
     assert "naics_keywords" in df.columns
-    assert "alpha_ratio" in df.columns
-    assert "acv_signal" in df.columns
+    assert "annualized_potential_value" in df.columns
+    assert "moat_index" in df.columns
+

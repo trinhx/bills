@@ -6,6 +6,8 @@ from typing import Optional
 class BaseAward:
     contract_transaction_unique_key: str
     award_id_piid: str
+    parent_award_id_piid: Optional[str]
+    transaction_type: Optional[str]
     federal_action_obligation: float
     total_dollars_obligated: float
     current_total_value_of_award: Optional[float]
@@ -45,6 +47,7 @@ class EnrichedAward(BaseAward):
     industry: Optional[str]
     last_verified_date: Optional[date]
     theme_llm: Optional[str]
+    sole_source_flag: Optional[bool]
 
 @dataclass
 class ThemedAward(EnrichedAward):
@@ -57,8 +60,10 @@ class ThemedAward(EnrichedAward):
 
 @dataclass
 class SignalsAward(ThemedAward):
+    contract_duration_years: Optional[float]
+    remaining_contract_length_years: Optional[float]
+    annualized_potential_value: Optional[float]
+    contract_potential_yield: Optional[float]
+    obligation_ratio: Optional[float]
+    moat_index: Optional[float]
     alpha_ratio: Optional[float]
-    difference_between_obligated_and_potential: Optional[float]
-    duration_days: Optional[int]
-    acv_signal: Optional[float]
-    acv_alpha_ratio: Optional[float]

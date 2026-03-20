@@ -19,6 +19,7 @@ def filter_and_select_phase1(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRel
     columns = [
         "contract_transaction_unique_key",
         "award_id_piid",
+        "parent_award_id_piid",
         "federal_action_obligation",
         "total_dollars_obligated",
         "current_total_value_of_award",
@@ -42,7 +43,50 @@ def filter_and_select_phase1(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRel
         "award_type"
     ]
     
-    return filtered.select(*columns)
+    # Base projection
+    selected = filtered.select(*columns)
+    
+    # Calculate transaction_type
+    proj_expr = f"""*,
+    CASE 
+        WHEN list_extract(string_split(contract_transaction_unique_key, '_'), -2) IN ('0', '000') 
+             AND list_extract(string_split(contract_transaction_unique_key, '_'), -1) IN ('0', '000') THEN
+            CASE 
+                WHEN parent_award_id_piid IS NULL OR parent_award_id_piid = '' OR parent_award_id_piid = '-NONE-' THEN 'NEW_AWARDS'
+                ELSE 'NEW_DELIVERY_ORDERS'
+            END
+        WHEN list_extract(string_split(contract_transaction_unique_key, '_'), -2) NOT IN ('0', '000') THEN
+            CASE
+                WHEN federal_action_obligation >= 5000000 THEN 'MODIFICATION'
+                WHEN federal_action_obligation = 0 
+                     AND transaction_description NOT ILIKE '%No Cost%'
+                     AND transaction_description NOT ILIKE '%Time Extension%'
+                     AND transaction_description NOT ILIKE '%Administrative Change%'
+                     AND transaction_description NOT ILIKE '%Correction%'
+                     AND transaction_description NOT ILIKE '%Address Update%'
+                     AND (
+                         transaction_description ILIKE '%Add%'
+                         OR transaction_description ILIKE '%Obligate%'
+                         OR transaction_description ILIKE '%Increment%'
+                         OR transaction_description ILIKE '%Funding%'
+                         OR transaction_description ILIKE '%Production of 164 Bradley Vehicles%'
+                         OR transaction_description ILIKE '%Procurement of Radar%'
+                         OR transaction_description ILIKE '%UCA%'
+                         OR transaction_description ILIKE '%Definitization%'
+                         OR transaction_description ILIKE '%Letter Contract%'
+                         OR transaction_description ILIKE '%ICS%'
+                         OR transaction_description ILIKE '%Interim Contractor Support%'
+                         OR transaction_description ILIKE '%CLS%'
+                         OR transaction_description ILIKE '%Option%'
+                         OR transaction_description ILIKE '%Incentive Fee%'
+                     ) THEN 'FUNDING_INCREASE'
+                ELSE NULL
+            END
+        ELSE NULL
+    END as transaction_type
+    """
+    
+    return selected.project(proj_expr)
 
 
 # --- Phase 2 Pure Transforms ---
@@ -159,40 +203,45 @@ def derive_deliverable(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
 def calculate_alpha_signals(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """
     Calculate quantitative signals:
-    - difference_between_obligated_and_potential = potential_total_value_of_award - total_dollars_obligated
-    - duration_days = period_of_performance_current_end_date - action_date
-    - acv_signal = (federal_action_obligation / GREATEST(30, duration_days)) * 365.25
-    - alpha_ratio = federal_action_obligation / NULLIF(market_cap, 0)
-    - acv_alpha_ratio = acv_signal / NULLIF(market_cap, 0)
-    """
-    
-def calculate_alpha_signals(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
-    """
-    Calculate quantitative signals:
-    - difference_between_obligated_and_potential = potential_total_value_of_award - total_dollars_obligated
-    - duration_days = period_of_performance_current_end_date - action_date
-    - acv_signal = (federal_action_obligation / GREATEST(30, duration_days)) * 365.25
-    - alpha_ratio = federal_action_obligation / NULLIF(market_cap, 0)
-    - acv_alpha_ratio = acv_signal / NULLIF(market_cap, 0)
+    - contract_duration_years
+    - remaining_contract_length_years
+    - annualized_potential_value
+    - contract_potential_yield
+    - obligation_ratio
+    - moat_index
     """
     
     # Step 1: Intermediate columns
     proj1 = """
         *,
-        (CAST(potential_total_value_of_award AS DOUBLE) - CAST(total_dollars_obligated AS DOUBLE)) AS difference_between_obligated_and_potential,
-        date_diff('day', CAST(action_date AS DATE), CAST(period_of_performance_current_end_date AS DATE)) AS raw_duration_days
+        date_diff('day', CAST(period_of_performance_start_date AS DATE), CAST(period_of_performance_current_end_date AS DATE)) / 365.25 AS contract_duration_years,
+        date_diff('day', CAST(action_date AS DATE), CAST(period_of_performance_current_end_date AS DATE)) / 365.25 AS remaining_contract_length_years
     """
     step1 = rel.project(proj1)
     
-    # Step 2: Final computations using prior intermediates
+    # Step 2: More derived columns including scores
     proj2 = """
-        * EXCLUDE (raw_duration_days),
-        CAST(raw_duration_days AS INTEGER) AS duration_days,
-        (CAST(federal_action_obligation AS DOUBLE) / GREATEST(30, raw_duration_days)) * 365.25 AS acv_signal,
-        CAST(federal_action_obligation AS DOUBLE) / NULLIF(market_cap, 0) AS alpha_ratio,
-        ((CAST(federal_action_obligation AS DOUBLE) / GREATEST(30, raw_duration_days)) * 365.25) / NULLIF(market_cap, 0) AS acv_alpha_ratio
+        *,
+        CAST(potential_total_value_of_award AS DOUBLE) / NULLIF(contract_duration_years, 0) AS annualized_potential_value,
+        CAST(federal_action_obligation AS DOUBLE) / NULLIF(current_total_value_of_award, 0) AS obligation_ratio,
+        CASE
+            WHEN number_of_offers_received = 1 THEN 1.0
+            WHEN number_of_offers_received > 1 THEN 1.0 / number_of_offers_received
+            WHEN number_of_offers_received IS NULL AND award_type = 'DELIVERY ORDER' THEN 0.5
+            ELSE NULL
+        END AS entrenchment_score,
+        LEAST(contract_duration_years / 10.0, 1.0) AS exclusivity_score
     """
-    return step1.project(proj2)
+    step2 = step1.project(proj2)
+    
+    # Step 3: Final Computations
+    proj3 = """
+        * EXCLUDE (entrenchment_score, exclusivity_score),
+        annualized_potential_value / NULLIF(market_cap, 0) AS contract_potential_yield,
+        CAST(federal_action_obligation AS DOUBLE) / NULLIF(market_cap, 0) AS alpha_ratio,
+        (exclusivity_score * 0.4) + (entrenchment_score * 0.6) AS moat_index
+    """
+    return step2.project(proj3)
 
 
 

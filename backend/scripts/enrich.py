@@ -124,8 +124,17 @@ def main():
     joined_tickers = join_openfigi(joined_hierarchy, ticker_rel)
     joined_tickers.create_view("joined_tickers", replace=True)
     
-    # Compute is_public derived logic directly
-    joined_tickers = joined_tickers.select("*, ticker IS NOT NULL as is_public")
+    # Compute derived logic directly
+    joined_tickers = joined_tickers.select(
+        "*, "
+        "ticker IS NOT NULL as is_public, "
+        "CASE "
+        "WHEN number_of_offers_received = 1 THEN TRUE "
+        "WHEN number_of_offers_received > 1 THEN FALSE "
+        "ELSE NULL END AS sole_source_flag"
+    )
+    
+    joined_tickers.create_view("joined_tickers_derived", replace=True)
     
     # 3. Resolve Market Cap
     ticker_pairs = joined_tickers.aggregate("ticker, action_date").filter("ticker IS NOT NULL AND action_date IS NOT NULL").fetchall()
@@ -160,7 +169,7 @@ def main():
     # Removed buggy checkpoint logic
 
     # Persist the joined_tickers relationship to the main db so we can retrieve it safely
-    cl_conn.execute("CREATE OR REPLACE TABLE temp_joined_tickers AS SELECT * FROM joined_tickers")
+    cl_conn.execute("CREATE OR REPLACE TABLE temp_joined_tickers AS SELECT * FROM joined_tickers_derived")
     
     # FATAL BUG WORKAROUND: DuckDB 1.1.0 crashes Python natively with "PendingQueryResult" 
     # when attempting to convert ATTACHED mutated databases into Pandas dataframes. 

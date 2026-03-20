@@ -17,7 +17,8 @@
 
 2) Draft pure transform functions (`backend/src/transform.py`)
 - Write pure functions that accept a `duckdb.DuckDBPyRelation` and return a `duckdb.DuckDBPyRelation` (or SQL string) with:
-  - Column selection: only required columns for downstream phases.
+  - Column selection: base schema columns plus derived fields:
+    - `transaction_type`: Derived from `contract_transaction_unique_key`, `parent_award_id_piid`, `federal_action_obligation`, and `transaction_description` to classify into `NEW_AWARDS`, `NEW_DELIVERY_ORDERS`, `MODIFICATION`, or `FUNDING_INCREASE`.
   - Filters applied during ingestion:
     - `federal_action_obligation >= 0`
     - `total_dollars_obligated >= 5000000`

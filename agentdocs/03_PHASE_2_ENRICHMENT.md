@@ -79,6 +79,6 @@ Implement functions that:
 - Output should include (at minimum): `highest_level_owner_name`, `is_public`, `ticker`, `market_cap`, `sector`, `last_verified_date`
 - Append the `last_verified_date` column to the relation using DuckDB's `CURRENT_TIMESTAMP` immediately before persisting
 - Do not compute Phase 4 signal math here (keep it for Phase 4).
-- Output should include all Phase 2 columns defined in the overview: theme_llm, cage_business_name, cage_update_date, is_highest, highest_level_owner_name, highest_level_cage_code, highest_level_cage_update_date, is_public, ticker, market_cap, sector, last_verified_date
+- Output should include all Phase 2 columns defined in the overview: theme_llm, cage_business_name, cage_update_date, is_highest, highest_level_owner_name, highest_level_cage_code, highest_level_cage_update_date, is_public, ticker, market_cap, sector, last_verified_date, sole_source_flag
 - If the CAGE scraper returns no results (e.g., CAGE code not found), upsert a row in cache_entity_hierarchy with result_status = 'not_found' and set all other fields to NULL. The cache‑first check must respect this status to avoid re‑scraping.
 
