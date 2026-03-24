@@ -67,3 +67,4 @@ class SignalsAward(ThemedAward):
     obligation_ratio: Optional[float]
     moat_index: Optional[float]
     alpha_ratio: Optional[float]
+    ceiling_change: Optional[float]

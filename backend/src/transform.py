@@ -46,47 +46,68 @@ def filter_and_select_phase1(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRel
     # Base projection
     selected = filtered.select(*columns)
     
+    # Calculate previous potential_total_value_of_award
+    lag_expr = f"""*,
+    LAG(CAST(potential_total_value_of_award AS DOUBLE)) OVER (
+        PARTITION BY award_id_piid 
+        ORDER BY action_date ASC, contract_transaction_unique_key ASC
+    ) AS prev_potential_value
+    """
+    rel_with_lag = selected.project(lag_expr)
+
     # Calculate transaction_type
     proj_expr = f"""*,
     CASE 
-        WHEN list_extract(string_split(contract_transaction_unique_key, '_'), -2) IN ('0', '000') 
-             AND list_extract(string_split(contract_transaction_unique_key, '_'), -1) IN ('0', '000') THEN
+        WHEN list_extract(string_split(contract_transaction_unique_key, '_'), -3) IN ('0', '000') THEN
             CASE 
                 WHEN parent_award_id_piid IS NULL OR parent_award_id_piid = '' OR parent_award_id_piid = '-NONE-' THEN 'NEW_AWARDS'
                 ELSE 'NEW_DELIVERY_ORDERS'
             END
-        WHEN list_extract(string_split(contract_transaction_unique_key, '_'), -2) NOT IN ('0', '000') THEN
+        WHEN list_extract(string_split(contract_transaction_unique_key, '_'), -3) NOT IN ('0', '000') THEN
             CASE
                 WHEN federal_action_obligation >= 5000000 THEN 'MODIFICATION'
-                WHEN federal_action_obligation = 0 
-                     AND transaction_description NOT ILIKE '%No Cost%'
-                     AND transaction_description NOT ILIKE '%Time Extension%'
-                     AND transaction_description NOT ILIKE '%Administrative Change%'
-                     AND transaction_description NOT ILIKE '%Correction%'
-                     AND transaction_description NOT ILIKE '%Address Update%'
-                     AND (
-                         transaction_description ILIKE '%Add%'
-                         OR transaction_description ILIKE '%Obligate%'
-                         OR transaction_description ILIKE '%Increment%'
-                         OR transaction_description ILIKE '%Funding%'
-                         OR transaction_description ILIKE '%Production of 164 Bradley Vehicles%'
-                         OR transaction_description ILIKE '%Procurement of Radar%'
-                         OR transaction_description ILIKE '%UCA%'
-                         OR transaction_description ILIKE '%Definitization%'
-                         OR transaction_description ILIKE '%Letter Contract%'
-                         OR transaction_description ILIKE '%ICS%'
-                         OR transaction_description ILIKE '%Interim Contractor Support%'
-                         OR transaction_description ILIKE '%CLS%'
-                         OR transaction_description ILIKE '%Option%'
-                         OR transaction_description ILIKE '%Incentive Fee%'
-                     ) THEN 'FUNDING_INCREASE'
+                WHEN federal_action_obligation = 0 THEN
+                    CASE
+                        WHEN transaction_description ILIKE '%No Cost%'
+                             OR transaction_description ILIKE '%Time Extension%'
+                             OR transaction_description ILIKE '%Administrative Change%'
+                             OR transaction_description ILIKE '%Correction%'
+                             OR transaction_description ILIKE '%Address Update%'
+                             OR transaction_description ILIKE '%Revision%'
+                             OR transaction_description ILIKE '%Clerical%'
+                             OR transaction_description ILIKE '%SP30%' THEN NULL
+                        WHEN (CAST(potential_total_value_of_award AS DOUBLE) - prev_potential_value) > 5000000 THEN 'FUNDING_INCREASE'
+                        WHEN transaction_description ILIKE '%Add%'
+                             OR transaction_description ILIKE '%Obligate%'
+                             OR transaction_description ILIKE '%Increment%'
+                             OR transaction_description ILIKE '%Funding%'
+                             OR transaction_description ILIKE '%Production%'
+                             OR transaction_description ILIKE '%Procurement%'
+                             OR transaction_description ILIKE '%Manufacture%'
+                             OR transaction_description ILIKE '%Purchase%'
+                             OR transaction_description ILIKE '%Acquisition%'
+                             OR transaction_description ILIKE '%Construction%'
+                             OR transaction_description ILIKE '%Execute%'
+                             OR transaction_description ILIKE '%UCA%'
+                             OR transaction_description ILIKE '%Definitization%'
+                             OR transaction_description ILIKE '%Letter Contract%'
+                             OR transaction_description ILIKE '%Undefinitized%'
+                             OR transaction_description ILIKE '%ICS%'
+                             OR transaction_description ILIKE '%Interim Contractor Support%'
+                             OR transaction_description ILIKE '%CLS%'
+                             OR transaction_description ILIKE '%Option%'
+                             OR transaction_description ILIKE '%Incentive Fee%'
+                             OR transaction_description ILIKE '%Award Fee%'
+                             OR transaction_description ILIKE '%Exercise%' THEN 'FUNDING_INCREASE'
+                        ELSE NULL
+                    END
                 ELSE NULL
             END
         ELSE NULL
     END as transaction_type
     """
     
-    return selected.project(proj_expr)
+    return rel_with_lag.project(proj_expr).project("* EXCLUDE (prev_potential_value)")
 
 
 # --- Phase 2 Pure Transforms ---
@@ -209,37 +230,44 @@ def calculate_alpha_signals(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRela
     - contract_potential_yield
     - obligation_ratio
     - moat_index
+    - ceiling_change
+    - alpha_ratio
     """
     
+    # Step 0: Calculate lag for potential_total_value to get ceiling_change
+    lag_expr = """*,
+    CAST(potential_total_value_of_award AS DOUBLE) - LAG(CAST(potential_total_value_of_award AS DOUBLE)) OVER (
+        PARTITION BY award_id_piid 
+        ORDER BY action_date ASC, contract_transaction_unique_key ASC
+    ) AS ceiling_change
+    """
+    step0 = rel.project(lag_expr)
+
     # Step 1: Intermediate columns
     proj1 = """
         *,
         date_diff('day', CAST(period_of_performance_start_date AS DATE), CAST(period_of_performance_current_end_date AS DATE)) / 365.25 AS contract_duration_years,
         date_diff('day', CAST(action_date AS DATE), CAST(period_of_performance_current_end_date AS DATE)) / 365.25 AS remaining_contract_length_years
     """
-    step1 = rel.project(proj1)
+    step1 = step0.project(proj1)
     
     # Step 2: More derived columns including scores
     proj2 = """
         *,
         CAST(potential_total_value_of_award AS DOUBLE) / NULLIF(contract_duration_years, 0) AS annualized_potential_value,
-        CAST(federal_action_obligation AS DOUBLE) / NULLIF(current_total_value_of_award, 0) AS obligation_ratio,
-        CASE
-            WHEN number_of_offers_received = 1 THEN 1.0
-            WHEN number_of_offers_received > 1 THEN 1.0 / number_of_offers_received
-            WHEN number_of_offers_received IS NULL AND award_type = 'DELIVERY ORDER' THEN 0.5
-            ELSE NULL
-        END AS entrenchment_score,
-        LEAST(contract_duration_years / 10.0, 1.0) AS exclusivity_score
+        CASE 
+            WHEN federal_action_obligation > 0 THEN CAST(federal_action_obligation AS DOUBLE) / NULLIF(current_total_value_of_award, 0)
+            ELSE GREATEST(0.0, ceiling_change) / NULLIF(current_total_value_of_award, 0)
+        END AS obligation_ratio
     """
     step2 = step1.project(proj2)
     
     # Step 3: Final Computations
     proj3 = """
-        * EXCLUDE (entrenchment_score, exclusivity_score),
+        *,
         annualized_potential_value / NULLIF(market_cap, 0) AS contract_potential_yield,
         CAST(federal_action_obligation AS DOUBLE) / NULLIF(market_cap, 0) AS alpha_ratio,
-        (exclusivity_score * 0.4) + (entrenchment_score * 0.6) AS moat_index
+        1.0 / NULLIF(number_of_offers_received, 0) AS moat_index
     """
     return step2.project(proj3)
 
