@@ -1,4 +1,6 @@
 .env
+.env.backup-*
+.obsidian-sync
 
 # Ignore all subdirectories inside data/
 data/*/

@@ -72,12 +72,53 @@ SESSION_COOKIE = os.getenv("CAGE_PHPSESS")
 VERIFICATION_TOKEN = os.getenv("CAGE_VERIFICATION_TOKEN")
 
 
+class CageAuthExpiredError(Exception):
+    """
+    Raised when CAGE either never had valid credentials or the in-flight
+    session has expired (cookies rotated, terms-of-use re-prompted, or
+    Cloudflare anti-bot challenge fired).
+
+    Orchestrators catch this and either fail fast at startup or enter the
+    interactive cookie-refresh flow via ``run_pipeline.sh`` (exit code 42).
+    """
+
+
+def _is_auth_failure_response(response: requests.Response) -> bool:
+    """
+    Detect the three signatures of a dead CAGE session.
+
+    CAGE returns 200 OK on auth failures -- the response body is either
+    the terms-of-use acceptance page, a Cloudflare identity challenge, or
+    an explicit access-denied message. Status code alone cannot
+    distinguish success from these cases, so we inspect the final URL and
+    body text.
+    """
+    if response is None:
+        return True
+    final_url = getattr(response, "url", "") or ""
+    body = getattr(response, "text", "") or ""
+    if "agree" in final_url.lower():
+        return True
+    if "verifying your identity" in body.lower():
+        return True
+    if "Access Denied" in body:
+        return True
+    return False
+
+
 def _validate_credentials() -> None:
-    """Validate CAGE credentials at runtime (not at import time)."""
+    """
+    Validate CAGE credentials at runtime (not at import time).
+
+    Raises ``CageAuthExpiredError`` rather than calling ``sys.exit`` so
+    that orchestrators can distinguish expiry from other failures and
+    decide how to react (fail fast, prompt for refresh, etc.).
+    """
     if not SESSION_COOKIE or not VERIFICATION_TOKEN:
-        print("\n[!] ERROR: Missing CAGE scraper credentials.")
-        print("    Please set CAGE_PHPSESS and CAGE_VERIFICATION_TOKEN in your .env file.")
-        sys.exit(1)
+        raise CageAuthExpiredError(
+            "Missing CAGE scraper credentials. "
+            "Set CAGE_PHPSESS and CAGE_VERIFICATION_TOKEN in your .env file."
+        )
 
     try:
         _test_cookies = {
@@ -85,15 +126,28 @@ def _validate_credentials() -> None:
             "__RequestVerificationToken": VERIFICATION_TOKEN,
             "agree": "True",
         }
-        _test_response = requests.get(f"{BASE_URL}/Search/Results?q=test&page=1", cookies=_test_cookies, timeout=10)
+        _test_response = requests.get(
+            f"{BASE_URL}/Search/Results?q=test&page=1",
+            cookies=_test_cookies,
+            timeout=10,
+        )
         _test_response.raise_for_status()
-        if "agree" in _test_response.url.lower() or "verifying your identity" in _test_response.text.lower() or "Access Denied" in _test_response.text:
-            print("\n[!] ERROR: CAGE session is invalid, expired, or blocked.")
-            print("    Please capture fresh CAGE_PHPSESS and CAGE_VERIFICATION_TOKEN values from your browser and update the .env file.")
-            sys.exit(1)
+        if _is_auth_failure_response(_test_response):
+            raise CageAuthExpiredError(
+                "CAGE session is invalid, expired, or blocked. "
+                "Capture fresh cookies from your browser and update .env."
+            )
+    except CageAuthExpiredError:
+        raise
     except Exception as e:
-        print(f"\n[!] ERROR: Network failure when validating CAGE scraper access: {e}")
-        sys.exit(1)
+        # Wrap non-auth network errors in the same exception so the
+        # orchestrator can react uniformly. The cookie-refresh prompt
+        # is also appropriate here (a fresh session usually clears up
+        # transient 5xx behaviour behind the Cloudflare fronting).
+        raise CageAuthExpiredError(
+            f"Network failure when validating CAGE scraper access: {e}"
+        ) from e
+
 
 CAGE_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -229,7 +283,9 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
                     string=re.compile(r"Immediate(?: Level)? Owner", re.IGNORECASE),
                 )
                 if immediate_header:
-                    imm_data_div = immediate_header.find_next_sibling("div", class_="data")
+                    imm_data_div = immediate_header.find_next_sibling(
+                        "div", class_="data"
+                    )
                     if imm_data_div and not imm_data_div.find(
                         string=re.compile(r"Information not Available", re.IGNORECASE)
                     ):
@@ -253,11 +309,14 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
                             ).get_text(strip=True)
 
                         hdate_label = imm_data_div.find(
-                            "label", string=re.compile(r"CAGE Last Updated", re.IGNORECASE)
+                            "label",
+                            string=re.compile(r"CAGE Last Updated", re.IGNORECASE),
                         )
                         if hdate_label and hdate_label.find_next_sibling("span"):
                             highest_level_cage_update_date = format_date(
-                                hdate_label.find_next_sibling("span").get_text(strip=True)
+                                hdate_label.find_next_sibling("span").get_text(
+                                    strip=True
+                                )
                             )
 
     result = {
@@ -269,7 +328,7 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
         "highest_level_cage_code": highest_level_cage_code,
         "highest_level_cage_update_date": highest_level_cage_update_date,
     }
-    
+
     logger.debug(f"Extracted CAGE fields: {result}")
     return result
 
@@ -278,10 +337,22 @@ def parse_cage_details(html: str) -> Dict[str, Any]:
 
 
 def fetch_html(session: requests.Session, url: str) -> str:
-    """Executes HTTP GET request and returns HTML text."""
+    """
+    Executes HTTP GET request and returns HTML text.
+
+    Raises ``CageAuthExpiredError`` (not a generic network error) when the
+    response looks like a terms-acceptance page, a Cloudflare challenge,
+    or an access-denied message. This lets the enrichment orchestrator
+    distinguish expired-session failures (needs human action) from
+    transient 5xx / connection errors (retry automatically).
+    """
     logger.debug(f"CAGE API Request: GET {url}")
     response = session.get(url, timeout=10)
     response.raise_for_status()
+    if _is_auth_failure_response(response):
+        raise CageAuthExpiredError(
+            f"CAGE session rejected request to {url}. Cookies likely expired."
+        )
     return response.text
 
 
@@ -297,7 +368,9 @@ def enrich_cage_data(
         session.cookies.update(cookies)
 
         # Step 1: Search CAGE code and extract the details URI
-        search_html = fetch_html(session, f"{BASE_URL}/Search/Results?q={cage_code}&page=1")
+        search_html = fetch_html(
+            session, f"{BASE_URL}/Search/Results?q={cage_code}&page=1"
+        )
         details_uri = parse_search_results(search_html)
 
         if not details_uri:

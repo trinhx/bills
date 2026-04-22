@@ -12,17 +12,20 @@ logger = logging.getLogger(__name__)
 # OpenFIGI permits 25 requests per minute with API Key (we do 24/min proactively to be safe)
 OPENFIGI_RATE_LIMITER = RateLimiter(max_requests=2, time_window=5.0)
 
+
 @with_retry(max_attempts=3, base_delay=5.0, max_delay=60.0)
-def fetch_openfigi_mapping(query_name: str, api_key: str = None) -> Optional[Dict[str, Any]]:
+def fetch_openfigi_mapping(
+    query_name: str, api_key: str = None
+) -> Optional[Dict[str, Any]]:
     """
     Fetch OpenFIGI mapping for a given name. Applies proactive rate limiting.
     OpenFIGI endpoint: POST https://api.openfigi.com/v3/mapping
-    Payload: [{"idType": "ID_WERTPAPIER", "idValue": "..."}] 
+    Payload: [{"idType": "ID_WERTPAPIER", "idValue": "..."}]
     For text search on name, OpenFIGI usually requires /v3/search, but the prompt says OpenFIGI mapping request.
     Actually, OpenFIGI mapping endpoint allows searching by name using idType: "BASE_TICKER" or similar.
     Wait, the prompt says OpenFIGI mapping request, but usually companies are searched by name using Search API.
-    Let's use the POST /v3/mapping API with idType 'ID_BB_GLOBAL' etc? 
-    No, for names, OpenFIGI mapping doesn't support 'NAME'. 
+    Let's use the POST /v3/mapping API with idType 'ID_BB_GLOBAL' etc?
+    No, for names, OpenFIGI mapping doesn't support 'NAME'.
     Let's use POST /v3/search for names.
     Wait, the prompt says: 'Batch up to 100 jobs per mapping request. ... OpenFIGI: highest_level_owner_name -> ticker.'
     If the prompt specifically says "mapping request", OpenFIGI's `/v3/mapping` accepts `idType` and `idValue`.
@@ -32,7 +35,7 @@ def fetch_openfigi_mapping(query_name: str, api_key: str = None) -> Optional[Dic
     Wait, another way is POST /v3/mapping if they have a non-standard idType. We'll use POST /v3/search.
     """
     OPENFIGI_RATE_LIMITER.wait()
-    
+
     url = "https://api.openfigi.com/v3/search"
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -42,14 +45,15 @@ def fetch_openfigi_mapping(query_name: str, api_key: str = None) -> Optional[Dic
         "query": query_name,
         "securityType": "Common Stock",
         "marketSecDes": "Equity",
-        "exchCode": "US"
+        "exchCode": "US",
     }
-    
+
     response = requests.post(url, headers=headers, json=payload, timeout=10)
     response.raise_for_status()
-    
+
     data = response.json()
     return data
+
 
 def normalize_company_name(name: str) -> str:
     """
@@ -57,64 +61,90 @@ def normalize_company_name(name: str) -> str:
     Strips noise like ', INC.' or ' CORPORATION' down to base equivalents.
     """
     name = name.upper().strip()
-    
+
     # Remove all punctuation except amptersands and spaces
-    name = re.sub(r'[^\w\s&]', ' ', name)
-    
+    name = re.sub(r"[^\w\s&]", " ", name)
+
     # Normalize extra spaces
-    name = re.sub(r'\s+', ' ', name).strip()
-    
+    name = re.sub(r"\s+", " ", name).strip()
+
     # Common legal entity mappings based on OpenFIGI's database tendencies
     substitutions = [
-        (r'\bINCORPORATED\b', 'INC'),
-        (r'\bCORPORATION\b', 'CORP'),
-        (r'\bCOMPANY\b', 'CO'),
-        (r'\bLIMITED LIABILITY COMPANY\b', 'LLC'),
-        (r'\bLIMITED LIABILITY CO\b', 'LLC'),
-        (r'\bLIMITED PARTNERSHIP\b', 'LP'),
-        (r'\bLIMITED\b', 'LTD'),
+        (r"\bINCORPORATED\b", "INC"),
+        (r"\bCORPORATION\b", "CORP"),
+        (r"\bCOMPANY\b", "CO"),
+        (r"\bLIMITED LIABILITY COMPANY\b", "LLC"),
+        (r"\bLIMITED LIABILITY CO\b", "LLC"),
+        (r"\bLIMITED PARTNERSHIP\b", "LP"),
+        (r"\bLIMITED\b", "LTD"),
     ]
-    
+
     for pattern, replacement in substitutions:
         name = re.sub(pattern, replacement, name)
-        
+
     return name.strip()
+
+
+# M1.5 P1-5: Bloomberg internal identifiers (e.g. ``1446752D``) occasionally
+# leak through OpenFIGI results when no real listed equity matches the query.
+# They break every downstream consumer (Yahoo 404s, EDGAR can't resolve).
+# Reject them. Pattern: 4+ digits optionally followed by a single trailing
+# uppercase letter. Real US tickers are 1-5 alpha chars with optional
+# ``-``/``.`` class suffix (e.g. ``BRK-A``), so this pattern doesn't
+# false-positive any legitimate symbol.
+_BLOOMBERG_ID_PATTERN = re.compile(r"^\d{4,}[A-Z]?$")
+
+
+def _is_bloomberg_id(ticker: str) -> bool:
+    """Return True if ``ticker`` looks like a Bloomberg internal ID."""
+    if not ticker:
+        return False
+    return bool(_BLOOMBERG_ID_PATTERN.match(ticker))
+
 
 def apply_deterministic_selection(data: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """
-    Since the API payload strictly requests Common Stock/Equity on the US exchange,
-    we just need to take the first valid result returned by OpenFIGI.
+    Since the API payload strictly requests Common Stock/Equity on the US
+    exchange, we just need to take the first valid equity result returned
+    by OpenFIGI. Bloomberg internal identifiers are rejected (M1.5 P1-5).
     """
     if "data" not in data or not data["data"]:
         return None
-        
+
     items = data["data"]
-    
-    # Filter out empty tickers just in case
-    valid_tickers = [item for item in items if item.get('ticker')]
-            
+
+    # Filter out empty tickers and Bloomberg-style IDs.
+    valid_tickers = [
+        item
+        for item in items
+        if item.get("ticker") and not _is_bloomberg_id(item["ticker"])
+    ]
+
     if not valid_tickers:
         return None
-        
+
     # Sort alphabetically as a fallback deterministic tie-breaker
-    valid_tickers.sort(key=lambda x: str(x.get('ticker', '')))
+    valid_tickers.sort(key=lambda x: str(x.get("ticker", "")))
     best_match = valid_tickers[0]
-    
-    ticker_str = best_match.get('ticker')
-    exch_code = best_match.get('exchCode')
-    
+
+    ticker_str = best_match.get("ticker")
+    exch_code = best_match.get("exchCode")
+
     return {
         "ticker": ticker_str,
         "exchange": exch_code,
-        "security_type": best_match.get('securityType', 'UNKNOWN')
+        "security_type": best_match.get("securityType", "UNKNOWN"),
     }
+
 
 def process_owner_name(owner_name: str) -> Optional[Dict[str, str]]:
     """Full workflow: fetch -> apply rules -> return schema subset."""
-    api_key = os.getenv("OPENFIGI_API_KEY") # Optional
+    api_key = os.getenv("OPENFIGI_API_KEY")  # Optional
     try:
         query_name = normalize_company_name(owner_name)
-        logger.debug(f"Normalized '{owner_name}' to -> '{query_name}' for OpenFIGI query")
+        logger.debug(
+            f"Normalized '{owner_name}' to -> '{query_name}' for OpenFIGI query"
+        )
         data = fetch_openfigi_mapping(query_name, api_key)
         best_match = apply_deterministic_selection(data)
         logger.debug(f"Extracted OpenFIGI fields for '{owner_name}': {best_match}")

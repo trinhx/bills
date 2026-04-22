@@ -4,47 +4,61 @@ import requests
 import duckdb
 from unittest.mock import patch, MagicMock
 
-from backend.app.services.providers.base import RateLimiter, with_retry, NetworkException
+from backend.app.services.providers.base import (
+    RateLimiter,
+    with_retry,
+    NetworkException,
+)
 from backend.app.services.providers.openfigi import apply_deterministic_selection
 from backend.app.services.providers.cage_scraper import parse_cage_details
-from backend.src.io import ensure_cache_tables, upsert_cached_entity_hierarchy, get_cached_entity_hierarchy
+from backend.src.io import (
+    ensure_cache_tables,
+    upsert_cached_entity_hierarchy,
+    get_cached_entity_hierarchy,
+)
+
 
 def test_proactive_rate_limiter():
     limiter = RateLimiter(max_requests=2, time_window=0.5)
-    
+
     start = time.time()
-    limiter.wait() # 1st allowed immediately
-    limiter.wait() # 2nd allowed immediately
-    limiter.wait() # 3rd must wait ~0.5s
+    limiter.wait()  # 1st allowed immediately
+    limiter.wait()  # 2nd allowed immediately
+    limiter.wait()  # 3rd must wait ~0.5s
     end = time.time()
-    
+
     elapsed = end - start
     assert elapsed >= 0.5, f"Limiter didn't block long enough: {elapsed}"
+
 
 class MockResponse:
     def __init__(self, status_code, headers=None):
         self.status_code = status_code
         self.headers = headers or {}
-        
+
     def raise_for_status(self):
         if self.status_code >= 400:
             raise requests.exceptions.HTTPError(response=self)
 
+
 def test_reactive_retry_success_after_429():
     mock_calls = []
-    
+
     @with_retry(max_attempts=3, base_delay=0.1)
     def flaky_func():
         mock_calls.append(1)
         if len(mock_calls) == 1:
-            resp = MockResponse(429, headers={"Retry-After": "0"}) # 0 so test runs fast
+            resp = MockResponse(
+                429, headers={"Retry-After": "0"}
+            )  # 0 so test runs fast
             e = requests.exceptions.RequestException(response=resp)
             raise e
         return "success"
-        
+
     result = flaky_func()
     assert result == "success"
     assert len(mock_calls) == 2
+
 
 def test_reactive_retry_terminal_failure():
     @with_retry(max_attempts=2, base_delay=0.01)
@@ -52,23 +66,66 @@ def test_reactive_retry_terminal_failure():
         resp = MockResponse(500)
         e = requests.exceptions.RequestException(response=resp)
         raise e
-        
+
     with pytest.raises(NetworkException) as excinfo:
         failing_func()
     assert excinfo.value.status_code == 500
+
 
 def test_openfigi_deterministic_selection():
     mock_data = {
         "data": [
             {"ticker": "MSFT", "exchCode": "LSE", "securityType": "Common Stock"},
             {"ticker": "MSFT", "exchCode": "US", "securityType": "Common Stock"},
-            {"ticker": "MSF", "exchCode": "US", "securityType": "Common Stock"}
+            {"ticker": "MSF", "exchCode": "US", "securityType": "Common Stock"},
         ]
     }
     # Should prioritize Common Stock, US, and then alphabetical (MSF < MSFT)
     res = apply_deterministic_selection(mock_data)
     assert res is not None
     assert res["ticker"] == "MSF"
+
+
+def test_openfigi_rejects_bloomberg_id():
+    """
+    M1.5 P1-5 regression guard.
+
+    OpenFIGI occasionally returns Bloomberg internal identifiers
+    (``1446752D``) when no real listed equity matches the query name.
+    These break every downstream consumer. They must be filtered out
+    before deterministic selection.
+    """
+    from backend.app.services.providers.openfigi import _is_bloomberg_id
+
+    # Pure helper
+    assert _is_bloomberg_id("1446752D") is True
+    assert _is_bloomberg_id("1446752") is True
+    assert _is_bloomberg_id("12345D") is True
+    assert _is_bloomberg_id("AAPL") is False
+    assert _is_bloomberg_id("BRK-A") is False
+    assert _is_bloomberg_id("BF.B") is False
+    assert _is_bloomberg_id("") is False
+    assert _is_bloomberg_id(None) is False
+
+    # All candidates are Bloomberg IDs -> returns None
+    only_bbg = {
+        "data": [
+            {"ticker": "1446752D", "exchCode": "US", "securityType": "Common Stock"},
+        ]
+    }
+    assert apply_deterministic_selection(only_bbg) is None
+
+    # Mix of Bloomberg ID + real ticker -> picks the real one
+    mixed = {
+        "data": [
+            {"ticker": "1446752D", "exchCode": "US", "securityType": "Common Stock"},
+            {"ticker": "EMR", "exchCode": "US", "securityType": "Common Stock"},
+        ]
+    }
+    res = apply_deterministic_selection(mixed)
+    assert res is not None
+    assert res["ticker"] == "EMR"
+
 
 def test_cage_scraper_parsing():
     html = """
@@ -95,6 +152,7 @@ def test_cage_scraper_parsing():
     assert res["immediate_level_owner"] is False
     assert res["highest_level_owner_name"] == "PARENT CORP"
     assert res["highest_level_cage_code"] == "67890"
+
 
 def test_cage_scraper_parsing_immediate_owner():
     html = """
@@ -125,11 +183,12 @@ def test_cage_scraper_parsing_immediate_owner():
     assert res["highest_level_owner_name"] == "IMMED CORP"
     assert res["highest_level_cage_code"] == "67891"
 
+
 def test_duckdb_cache_upsert():
-    conn = duckdb.connect(':memory:')
+    conn = duckdb.connect(":memory:")
     conn.execute("ATTACH ':memory:' AS cache;")
     ensure_cache_tables(conn)
-    
+
     data1 = {
         "uei": "UEI1",
         "cage_code": "C1",
@@ -141,13 +200,13 @@ def test_duckdb_cache_upsert():
         "highest_level_cage_code": "C1",
         "highest_level_cage_update_date": None,
         "result_status": "success",
-        "last_verified": "2023-01-01 12:00:00"
+        "last_verified": "2023-01-01 12:00:00",
     }
     upsert_cached_entity_hierarchy(conn, data1)
-    
+
     fetched = get_cached_entity_hierarchy(conn, "C1")
     assert fetched["cage_code"] == "C1"
-    
+
     # Upsert with update
     data1["cage_business_name"] = "N2"
     upsert_cached_entity_hierarchy(conn, data1)
