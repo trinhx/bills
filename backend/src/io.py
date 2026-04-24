@@ -1,4 +1,5 @@
 import duckdb
+import os
 import pandas as pd
 from pathlib import Path
 from datetime import date, datetime
@@ -11,13 +12,55 @@ if TYPE_CHECKING:
     from backend.app.services.providers.returns import ReturnsProvider  # noqa: F401
 
 
+#: Default DuckDB memory budget for the pipeline.
+#:
+#: Phase 1 ingestion runs a ``LAG()`` window function partitioned on
+#: ``award_id_piid`` across every input CSV. On a multi-year ingestion
+#: (37 files, ~37M raw rows, 297 columns), DuckDB's default "80% of
+#: system RAM" budget can trigger the Linux OOM-killer on 30-GB-RAM
+#: workstations -- the process is terminated with no Python traceback,
+#: leaving ``cleaned.duckdb`` in a partial / confusing state.
+#:
+#: We pin a 12 GB budget here (conservative relative to a 30 GB box,
+#: leaving ~18 GB for the OS, Python interpreter, and provider caches).
+#: DuckDB spills to disk (via the configured ``temp_directory``) when
+#: workloads exceed this. Operators with larger machines can raise the
+#: limit via the ``DUCKDB_MEMORY_LIMIT`` environment variable (e.g.
+#: "24GB" on a 64-GB server).
+_DEFAULT_MEMORY_LIMIT = "12GB"
+
+#: Where DuckDB writes spill files when ``memory_limit`` is exceeded.
+#: We colocate this with the cleaned DB so operators only need to free
+#: one volume if disk pressure becomes an issue. Override via
+#: ``DUCKDB_TEMP_DIR``.
+_DEFAULT_TEMP_DIR = "backend/data/tmp"
+
+
+def _apply_pragmas(conn: duckdb.DuckDBPyConnection) -> None:
+    """
+    Pin the memory budget and enable spill-to-disk so that long pipeline
+    runs don't OOM-kill on multi-GB ingestions. Kept as a helper so
+    cache connections and the cleaned DB get identical settings.
+    """
+    mem_limit = os.getenv("DUCKDB_MEMORY_LIMIT", _DEFAULT_MEMORY_LIMIT)
+    temp_dir = os.getenv("DUCKDB_TEMP_DIR", _DEFAULT_TEMP_DIR)
+    Path(temp_dir).mkdir(parents=True, exist_ok=True)
+    # ``memory_limit`` is a soft cap that triggers spill-to-disk; pairing
+    # with an explicit ``temp_directory`` avoids DuckDB writing spill
+    # files next to the main database (confusing on disk) and lets
+    # operators place the scratch volume on a faster drive if needed.
+    conn.execute(f"SET memory_limit='{mem_limit}';")
+    conn.execute(f"SET temp_directory='{temp_dir}';")
+    conn.execute("SET wal_autocheckpoint='1000MB';")
+
+
 def get_cleaned_conn(
     db_path: str = "backend/data/cleaned/cleaned.duckdb",
 ) -> duckdb.DuckDBPyConnection:
     """Open connection to the cleaned DuckDB database."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(db_path)
-    conn.execute("SET wal_autocheckpoint='1000MB';")
+    _apply_pragmas(conn)
     return conn
 
 
@@ -114,7 +157,9 @@ def get_cache_conn(
 ) -> duckdb.DuckDBPyConnection:
     """Open connection to the cache DuckDB database."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(db_path)
+    conn = duckdb.connect(db_path)
+    _apply_pragmas(conn)
+    return conn
 
 
 def ensure_cache_tables(conn: duckdb.DuckDBPyConnection) -> None:

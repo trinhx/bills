@@ -68,7 +68,9 @@ SIGNAL_CANDIDATES: List[str] = [
     "difference_between_obligated_and_potential",
 ]
 
-HORIZONS: List[int] = [1, 5, 20, 60]
+#: Horizons displayed in the executive summary / coverage tables.
+#: Must match (or be a subset of) ``validate.FORWARD_HORIZONS``.
+HORIZONS: List[int] = [1, 5, 20, 60, 90, 120, 180]
 
 # Return column prefix used by validate.py
 EXCESS_PREFIX = "excess_return_"

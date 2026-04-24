@@ -130,7 +130,10 @@ def test_full_m2_harness_end_to_end(pipeline_env):
             "MSFT": 420.0,
             "GOOG": 150.0,
         }.get(ticker, 100.0)
-        return _synth_bars(base, days=120, step=step, start_date="2024-08-25")
+        # Span ~260 business days so the cache covers the expanded
+        # LOOKFORWARD_DAYS (265 calendar) window after all six fixture
+        # action dates in Sep 2024.
+        return _synth_bars(base, days=260, step=step, start_date="2024-08-25")
 
     provider.fetch_daily_bars.side_effect = fetch_daily_bars
     # fetch_benchmark is invoked by ensure_benchmark_pre_fetched only when
@@ -198,8 +201,8 @@ def test_full_m2_harness_is_idempotent(pipeline_env):
     def fetch_daily_bars(ticker, start, end):
         return _synth_bars(
             450.0 if ticker == "SPY" else 100.0,
-            days=120,
-            step=0.003,
+            days=260,
+            step=0.001,
             start_date="2024-08-25",
         )
 

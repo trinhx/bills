@@ -64,13 +64,31 @@ from backend.src.io import (
     upsert_cached_returns,
 )
 
-# Trading-day horizons to measure. Quarter-boundary is T+60.
-FORWARD_HORIZONS: List[int] = [1, 5, 20, 60]
+# Trading-day horizons to measure. Short end captures event-driven
+# reactions; long end captures slower drift and mean reversion.
+#
+#   T+1   -- next-day reaction
+#   T+5   -- weekly
+#   T+20  -- monthly (common quant-research horizon)
+#   T+60  -- quarterly
+#   T+90  -- ~1.3 months beyond quarter
+#   T+120 -- ~half-year
+#   T+180 -- ~9 months (annualized-return scale)
+#
+# Rows land NaN for any horizon where the cache doesn't yet extend that
+# far past action_date; the analytics layer skips them. Later-quarter
+# rows have less long-horizon coverage than earlier-quarter rows, so
+# T+120 / T+180 are computed on a shrinking sample as we approach the
+# end of the cached window.
+FORWARD_HORIZONS: List[int] = [1, 5, 20, 60, 90, 120, 180]
 
-# Pad on each side of the action-date window so every row has enough
-# prior context and enough trailing trading days to compute T+60.
+# Pad on each side of the action-date window. LOOKFORWARD_DAYS is the
+# calendar-day pad used by the provider fetch; 180 trading days ~= 252
+# calendar days, but we only need full coverage for the earliest rows
+# in the dataset (FY2024 start). Later rows get the longer horizons
+# only as market data accrues; see the FORWARD_HORIZONS docstring.
 LOOKBACK_DAYS: int = 5
-LOOKFORWARD_DAYS: int = 95  # ~ 60 trading days + weekends + holidays
+LOOKFORWARD_DAYS: int = 265  # ~ 180 trading days + weekends + holidays
 
 
 def setup_logging(debug: bool = False) -> logging.Logger:

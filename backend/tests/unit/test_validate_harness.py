@@ -367,15 +367,16 @@ def test_run_validation_is_idempotent(staged_db):
     Second invocation with the same inputs must not re-call the provider.
 
     The signals have action_date in late Sep / early Oct, so the fetch
-    window is min - 5d through max + 95d (~2024-09-25 through 2025-01-06).
-    Synthetic bars must span enough business days to fully cover that
-    window, otherwise the cache-coverage check triggers a re-fetch.
+    window is min - LOOKBACK through max + LOOKFORWARD (~2024-09-25 through
+    mid-2025 for the expanded T+180 horizon). Synthetic bars must span
+    enough business days to fully cover that window, otherwise the
+    cache-coverage check triggers a re-fetch.
     """
     cleaned_path, cache_path = staged_db
 
     provider = MagicMock()
 
-    def _synth(close_start, days=100, step=0.01, start_date="2024-09-25"):
+    def _synth(close_start, days=260, step=0.001, start_date="2024-09-25"):
         idx = pd.bdate_range(start=start_date, periods=days)
         closes = [close_start * (1.0 + step) ** i for i in range(days)]
         df = pd.DataFrame({"close_adj": closes}, index=idx)

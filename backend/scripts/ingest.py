@@ -119,12 +119,16 @@ def main():
             logger.info(f"Scanning {len(inputs)} CSVs lazily (DuckDB multi-file)")
             raw_rel = scan_contracts_csv(conn, inputs)
             # For the ingestion_profile table we record a readable summary
-            # rather than a 7-way concatenated path.
+            # rather than a multi-way concatenated path.
             input_file_label = f"<{len(inputs)} files> {inputs[0]} ... {inputs[-1]}"
 
-        input_count_rel = raw_rel.aggregate("count(*)")
-        input_count = input_count_rel.fetchone()[0]
-        logger.info(f"Input row count: {input_count}")
+        # NOTE: we deliberately do NOT count raw input rows here. On a
+        # multi-file ingestion (e.g. 37 CSVs, ~37M raw rows, 297 cols),
+        # a pre-count requires a full CSV scan on its own -- doubling
+        # disk I/O and adding minutes to the run for a metric that's
+        # purely informational. The output row count is logged below
+        # after the Phase 1 filter completes.
+        input_count = -1  # sentinel for "not measured"
 
         logger.info("Applying Phase 1 transformations")
         filtered_rel = filter_and_select_phase1(raw_rel)
