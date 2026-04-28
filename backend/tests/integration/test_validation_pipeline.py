@@ -88,6 +88,17 @@ def pipeline_env(tmp_path: Path):
                 "obligation_ratio": 0.01 * (i + 1),
                 "moat_index": 1.0,
                 "difference_between_obligated_and_potential": 1e5 * (i + 1),
+                # M_events: event-classification + magnitude features.
+                # Fixture rows are alternating MAJOR_EXPANSION / NEW_AWARD
+                # so the event-class section has at least 2 classes to
+                # render against (though sample size is below the 100-row
+                # MIN_EVENT_CLASS_ROWS threshold, so they'll just be
+                # tagged as "below the minimum").
+                "event_class": "MAJOR_EXPANSION" if i % 2 == 0 else "NEW_AWARD",
+                "ceiling_change_log_dollars": 8.0 + 0.01 * i,
+                "ceiling_change_pct_of_mcap": 0.001 * (i + 1),
+                "relative_ceiling_change": 0.1 * (i + 1),
+                "ceiling_change": 1e8 * (i + 1) if i % 2 == 0 else None,
             }
         )
     df = pd.DataFrame(rows)
@@ -183,7 +194,9 @@ def test_full_m2_harness_end_to_end(pipeline_env):
     # M2.5: section 6 is now the industry IC breakdown; decision summary moved to 8.
     assert "6. Industry-level IC breakdown" in html
     assert "7. Per-quarter stability filter" in html
-    assert "8. Decision Summary" in html
+    # M_events: section 8 is event-class IC, 9 is event-magnitude,
+    # decision-summary now lives at 10.
+    assert "10. Decision Summary" in html
     for signal in SIGNAL_CANDIDATES:
         assert signal in html
 

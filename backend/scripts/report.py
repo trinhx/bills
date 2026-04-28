@@ -396,7 +396,45 @@ the overall |IC| clears the 0.02 threshold. These are the surviving
 candidates.</p>
 {per_quarter_stability}
 
-<h2>8. Decision Summary</h2>
+<h2>8. Event-class IC breakdown</h2>
+<p>Tests the hypothesis that the alpha is in the <em>change</em>
+(specific contract events) rather than the <em>level</em> (every
+transaction). Each row in <code>signals_awards</code> has been bucketed
+into an <code>event_class</code> by combining
+<code>transaction_type</code> and <code>ceiling_change</code> magnitude:</p>
+<ul>
+  <li><strong>NEW_AWARD</strong> -- first action on a piid (no parent IDIQ)</li>
+  <li><strong>NEW_DELIVERY_ORDER</strong> -- first task order against an IDIQ parent</li>
+  <li><strong>MAJOR_EXPANSION</strong> -- FUNDING_INCREASE with ceiling_change &gt; $100M</li>
+  <li><strong>MODERATE_EXPANSION</strong> -- FUNDING_INCREASE with ceiling_change in ($10M, $100M]</li>
+  <li><strong>MINOR_EXPANSION</strong> -- FUNDING_INCREASE with positive ceiling_change &le; $10M</li>
+  <li><strong>CONTRACTION</strong> -- any negative ceiling_change</li>
+  <li><strong>OTHER_MOD / NON_EVENT</strong> -- modifications with no ceiling change</li>
+</ul>
+<p>For each event class we report IC across all years AND per fiscal year.
+Rows shown clear <code>|IC| &ge; 0.02</code> AND keep the same sign in
+&ge; 5 of 6 fiscal years (the bar that has killed every prior level-based
+signal). Uses industry-neutral excess returns.</p>
+{event_class_ic_sections}
+
+<h2>9. Event-magnitude IC breakdown</h2>
+<p>Three continuous magnitude features test whether the <em>size</em>
+of an event predicts returns even when the <em>type</em> doesn't:</p>
+<ul>
+  <li><code>ceiling_change_log_dollars</code> -- signed log10(|ceiling_change|);
+      compresses long-tail dollar amounts</li>
+  <li><code>ceiling_change_pct_of_mcap</code> -- ceiling_change / market_cap;
+      step-change analog of <code>alpha_ratio</code></li>
+  <li><code>relative_ceiling_change</code> -- ceiling_change / prev_potential_value;
+      percent expansion of the ceiling</li>
+</ul>
+<p>If <code>relative_ceiling_change</code> is much stronger than
+<code>ceiling_change_pct_of_mcap</code>, the signal is about <em>contract
+scaling</em>; if the reverse, it's about <em>company-size scaling</em>.
+Same cross-regime threshold as section 8.</p>
+{event_magnitude_ic_sections}
+
+<h2>10. Decision Summary</h2>
 <p>Three threshold criteria are reported side-by-side. The report does
 not auto-pick a verdict; the final call is the reviewer's.</p>
 
@@ -715,6 +753,216 @@ def _build_per_quarter_stability_section(df: pd.DataFrame) -> str:
     return _df_to_html_table(table)
 
 
+# ---------------------------------------------------------------------------
+# Event-class + event-magnitude breakdowns (Sections 8 + 9)
+# ---------------------------------------------------------------------------
+
+#: Event classes we want to surface in the report. Order is the order
+#: they're displayed.
+EVENT_CLASSES_OF_INTEREST: List[str] = [
+    "NEW_AWARD",
+    "NEW_DELIVERY_ORDER",
+    "MAJOR_EXPANSION",
+    "MODERATE_EXPANSION",
+    "MINOR_EXPANSION",
+    "CONTRACTION",
+]
+
+#: Minimum row count for an event_class x signal x horizon cell to
+#: be included in the IC table. Below this we can't tell signal from noise.
+MIN_EVENT_CLASS_ROWS: int = 100
+
+#: Cross-regime success threshold: the IC must keep the same sign in at
+#: least this many of the available fiscal years. The 6-year cross-regime
+#: test is the bar that has killed every prior level-based signal.
+EVENT_MIN_SAME_SIGN_YEARS: int = 5
+
+
+def _ic_per_year(
+    df: pd.DataFrame, signal_col: str, return_col: str
+) -> Dict[str, float]:
+    """
+    Compute IC for each fiscal year present in ``df['fiscal_quarter']``.
+
+    Returns a dict ``{fy: ic}`` where ``fy`` is the FY-prefix string
+    (e.g. ``'FY24'``). NaN ICs (insufficient data) are dropped from the
+    dict.
+    """
+    if "fiscal_quarter" not in df.columns:
+        return {}
+    out: Dict[str, float] = {}
+    fy_series = df["fiscal_quarter"].astype(str).str.slice(0, 4)
+    for fy, sub in df.groupby(fy_series, dropna=False):
+        if pd.isna(fy) or fy in {"UNKN", "nan", ""}:
+            continue
+        ic = information_coefficient(sub[signal_col], sub[return_col])
+        if ic["ic"] is not None:
+            out[fy] = ic["ic"]
+    return out
+
+
+def _build_event_class_ic_sections(
+    df: pd.DataFrame,
+    signal_cols: Iterable[str] = (
+        "alpha_ratio",
+        "acv_alpha_ratio",
+        "contract_potential_yield",
+        "moat_index",
+        "difference_between_obligated_and_potential",
+    ),
+    horizons: Iterable[int] = (5, 20, 60, 120, 180),
+    return_prefix: str = "industry_excess_return_",
+    min_same_sign_years: int = EVENT_MIN_SAME_SIGN_YEARS,
+    min_rows: int = MIN_EVENT_CLASS_ROWS,
+) -> str:
+    """
+    Produce Section 8: for each event class, a table of (signal, horizon)
+    cells where (a) |IC_all| >= 0.02 AND (b) the IC is same-signed in
+    >= ``min_same_sign_years`` of the available fiscal years.
+
+    The cross-year strictness is the headline filter -- prior reports
+    that found "good" signals in single windows almost always fail this
+    test, so any survivors are notable.
+    """
+    if "event_class" not in df.columns:
+        return "<p><em>(event_class column not present in data)</em></p>"
+
+    chunks: List[str] = []
+    for event_class in EVENT_CLASSES_OF_INTEREST:
+        sub = df[df["event_class"] == event_class]
+        if len(sub) < min_rows:
+            chunks.append(
+                f"<h3>{_html_escape(event_class)}</h3>"
+                f"<p><em>(only {len(sub):,} rows; below the {min_rows} minimum)</em></p>"
+            )
+            continue
+
+        rows: List[Dict] = []
+        for signal in signal_cols:
+            if signal not in sub.columns:
+                continue
+            for h in horizons:
+                ret_col = f"{return_prefix}{h}d"
+                if ret_col not in sub.columns:
+                    continue
+                ic_all = information_coefficient(sub[signal], sub[ret_col])
+                if ic_all["ic"] is None or abs(ic_all["ic"]) < 0.02:
+                    continue
+                # Per-year sign consistency
+                per_year = _ic_per_year(sub, signal, ret_col)
+                target_sign = 1 if ic_all["ic"] > 0 else -1
+                same_sign = sum(
+                    1
+                    for v in per_year.values()
+                    if (v > 0 and target_sign > 0) or (v < 0 and target_sign < 0)
+                )
+                n_years = len(per_year)
+                if same_sign < min_same_sign_years:
+                    continue
+                row = {
+                    "signal": signal,
+                    "horizon": f"T+{h}d",
+                    "n": ic_all["n"],
+                    "ic_all": ic_all["ic"],
+                    "p_value": ic_all["p_value"],
+                    "same_sign_yrs": f"{same_sign}/{n_years}",
+                }
+                # Per-year columns sorted alphabetically (FY21..FY26)
+                for fy in sorted(per_year):
+                    row[f"ic_{fy}"] = per_year[fy]
+                rows.append(row)
+
+        chunks.append(f"<h3>{_html_escape(event_class)} (n={len(sub):,})</h3>")
+        if not rows:
+            chunks.append(
+                "<p><em>No (signal, horizon) cells meet the filter for "
+                "this event class.</em></p>"
+            )
+        else:
+            tbl = pd.DataFrame(rows).sort_values(
+                "ic_all", key=lambda s: s.abs(), ascending=False
+            )
+            chunks.append(_df_to_html_table(tbl))
+    return "\n".join(chunks)
+
+
+def _build_event_magnitude_ic_sections(
+    df: pd.DataFrame,
+    horizons: Iterable[int] = (5, 20, 60, 120, 180),
+    return_prefix: str = "industry_excess_return_",
+    min_same_sign_years: int = EVENT_MIN_SAME_SIGN_YEARS,
+    min_rows: int = MIN_EVENT_CLASS_ROWS,
+) -> str:
+    """
+    Produce Section 9: for each event-magnitude feature
+    (``ceiling_change_log_dollars``, ``ceiling_change_pct_of_mcap``,
+    ``relative_ceiling_change``), show IC by (event_class, horizon)
+    where the cross-year sign-consistency filter is met.
+
+    Unlike Section 8, here the "signal" varies and the event_class is
+    used to *segment* the population -- showing whether a magnitude
+    feature works within a given event type.
+    """
+    magnitude_features = [
+        "ceiling_change_log_dollars",
+        "ceiling_change_pct_of_mcap",
+        "relative_ceiling_change",
+    ]
+    chunks: List[str] = []
+    for feature in magnitude_features:
+        if feature not in df.columns:
+            chunks.append(
+                f"<h3>{_html_escape(feature)}</h3>"
+                f"<p><em>(feature column not present in data)</em></p>"
+            )
+            continue
+        chunks.append(f"<h3>{_html_escape(feature)}</h3>")
+        rows: List[Dict] = []
+        for event_class in EVENT_CLASSES_OF_INTEREST:
+            sub = df[df["event_class"] == event_class]
+            sub = sub[sub[feature].notna()]
+            if len(sub) < min_rows:
+                continue
+            for h in horizons:
+                ret_col = f"{return_prefix}{h}d"
+                if ret_col not in sub.columns:
+                    continue
+                ic_all = information_coefficient(sub[feature], sub[ret_col])
+                if ic_all["ic"] is None or abs(ic_all["ic"]) < 0.02:
+                    continue
+                per_year = _ic_per_year(sub, feature, ret_col)
+                target_sign = 1 if ic_all["ic"] > 0 else -1
+                same_sign = sum(
+                    1
+                    for v in per_year.values()
+                    if (v > 0 and target_sign > 0) or (v < 0 and target_sign < 0)
+                )
+                if same_sign < min_same_sign_years:
+                    continue
+                row = {
+                    "event_class": event_class,
+                    "horizon": f"T+{h}d",
+                    "n": ic_all["n"],
+                    "ic_all": ic_all["ic"],
+                    "p_value": ic_all["p_value"],
+                    "same_sign_yrs": f"{same_sign}/{len(per_year)}",
+                }
+                for fy in sorted(per_year):
+                    row[f"ic_{fy}"] = per_year[fy]
+                rows.append(row)
+        if not rows:
+            chunks.append(
+                "<p><em>No (event_class, horizon) cells meet the filter for "
+                "this magnitude feature.</em></p>"
+            )
+        else:
+            tbl = pd.DataFrame(rows).sort_values(
+                "ic_all", key=lambda s: s.abs(), ascending=False
+            )
+            chunks.append(_df_to_html_table(tbl))
+    return "\n".join(chunks)
+
+
 def _build_decision_sections(summary: pd.DataFrame) -> str:
     """Render the three criteria tables for section 6."""
     criteria = _decision_rows(summary)
@@ -779,6 +1027,10 @@ def generate_report(
     industry_ic_html = _build_industry_ic_sections(df)
     per_quarter_stability_html = _build_per_quarter_stability_section(df)
 
+    # M_events sections: event-class IC and event-magnitude IC.
+    event_class_ic_html = _build_event_class_ic_sections(df)
+    event_magnitude_ic_html = _build_event_magnitude_ic_sections(df)
+
     # Per-signal sections
     per_signal_html = []
     for signal in SIGNAL_CANDIDATES:
@@ -815,6 +1067,8 @@ def generate_report(
         ic_by_transaction_type=_df_to_html_table(ic_by_tt),
         industry_ic_sections=industry_ic_html,
         per_quarter_stability=per_quarter_stability_html,
+        event_class_ic_sections=event_class_ic_html,
+        event_magnitude_ic_sections=event_magnitude_ic_html,
         min_industry_rows=MIN_INDUSTRY_ROWS,
         decision_sections=_build_decision_sections(summary),
     )
@@ -871,6 +1125,137 @@ def generate_report(
             )
         else:
             md.append(_df_to_markdown_table(stability))
+
+        # Event-class + event-magnitude markdown summaries. We re-use the
+        # HTML-rendered HTML strings rather than re-running the analysis,
+        # but for markdown we want a plain rendering -- so call the
+        # builder fns directly and convert their tables.
+        md.append("\n\n## Event-class IC breakdown\n")
+        md.append(
+            "(event_class, signal, horizon) combos with |IC| >= 0.02 AND "
+            f"same sign in >= {EVENT_MIN_SAME_SIGN_YEARS} of available "
+            "fiscal years. Uses industry-neutral returns.\n"
+        )
+        if "event_class" not in df.columns:
+            md.append("\n_(event_class column not present; rerun signals.py)_\n")
+        else:
+            any_event = False
+            for event_class in EVENT_CLASSES_OF_INTEREST:
+                sub = df[df["event_class"] == event_class]
+                if len(sub) < MIN_EVENT_CLASS_ROWS:
+                    continue
+                rows = []
+                for signal in (
+                    "alpha_ratio",
+                    "acv_alpha_ratio",
+                    "contract_potential_yield",
+                    "moat_index",
+                    "difference_between_obligated_and_potential",
+                ):
+                    if signal not in sub.columns:
+                        continue
+                    for h in (5, 20, 60, 120, 180):
+                        ret_col = f"industry_excess_return_{h}d"
+                        if ret_col not in sub.columns:
+                            continue
+                        ic_all = information_coefficient(sub[signal], sub[ret_col])
+                        if ic_all["ic"] is None or abs(ic_all["ic"]) < 0.02:
+                            continue
+                        per_year = _ic_per_year(sub, signal, ret_col)
+                        target_sign = 1 if ic_all["ic"] > 0 else -1
+                        same_sign = sum(
+                            1
+                            for v in per_year.values()
+                            if (v > 0 and target_sign > 0)
+                            or (v < 0 and target_sign < 0)
+                        )
+                        if same_sign < EVENT_MIN_SAME_SIGN_YEARS:
+                            continue
+                        rows.append(
+                            {
+                                "signal": signal,
+                                "horizon": f"T+{h}d",
+                                "n": ic_all["n"],
+                                "ic_all": ic_all["ic"],
+                                "same_sign_yrs": f"{same_sign}/{len(per_year)}",
+                            }
+                        )
+                if rows:
+                    any_event = True
+                    md.append(f"\n### {event_class} (n={len(sub):,})\n")
+                    md.append(
+                        _df_to_markdown_table(
+                            pd.DataFrame(rows).sort_values(
+                                "ic_all", key=lambda s: s.abs(), ascending=False
+                            )
+                        )
+                    )
+            if not any_event:
+                md.append(
+                    "\n_No (event_class, signal, horizon) combos meet the "
+                    "filter._\n"
+                )
+
+        md.append("\n\n## Event-magnitude IC breakdown\n")
+        md.append(
+            "Continuous magnitude features by event_class x horizon. "
+            "Same threshold as section above.\n"
+        )
+        any_mag = False
+        for feature in (
+            "ceiling_change_log_dollars",
+            "ceiling_change_pct_of_mcap",
+            "relative_ceiling_change",
+        ):
+            if feature not in df.columns:
+                continue
+            rows = []
+            for event_class in EVENT_CLASSES_OF_INTEREST:
+                sub = df[df["event_class"] == event_class]
+                sub = sub[sub[feature].notna()]
+                if len(sub) < MIN_EVENT_CLASS_ROWS:
+                    continue
+                for h in (5, 20, 60, 120, 180):
+                    ret_col = f"industry_excess_return_{h}d"
+                    if ret_col not in sub.columns:
+                        continue
+                    ic_all = information_coefficient(sub[feature], sub[ret_col])
+                    if ic_all["ic"] is None or abs(ic_all["ic"]) < 0.02:
+                        continue
+                    per_year = _ic_per_year(sub, feature, ret_col)
+                    target_sign = 1 if ic_all["ic"] > 0 else -1
+                    same_sign = sum(
+                        1
+                        for v in per_year.values()
+                        if (v > 0 and target_sign > 0)
+                        or (v < 0 and target_sign < 0)
+                    )
+                    if same_sign < EVENT_MIN_SAME_SIGN_YEARS:
+                        continue
+                    rows.append(
+                        {
+                            "event_class": event_class,
+                            "horizon": f"T+{h}d",
+                            "n": ic_all["n"],
+                            "ic_all": ic_all["ic"],
+                            "same_sign_yrs": f"{same_sign}/{len(per_year)}",
+                        }
+                    )
+            if rows:
+                any_mag = True
+                md.append(f"\n### {feature}\n")
+                md.append(
+                    _df_to_markdown_table(
+                        pd.DataFrame(rows).sort_values(
+                            "ic_all", key=lambda s: s.abs(), ascending=False
+                        )
+                    )
+                )
+        if not any_mag:
+            md.append(
+                "\n_No (event_class, magnitude_feature, horizon) combos "
+                "meet the filter._\n"
+            )
 
         md.append("\n\n## Decision criteria\n")
         for label, matching in _decision_rows(summary).items():

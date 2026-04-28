@@ -124,6 +124,14 @@ class SignalsAward(ThemedAward):
     acv_alpha_ratio: Optional[float]
     difference_between_obligated_and_potential: Optional[float]
 
+    # Event-magnitude features (M_events). Capture the *step-change*
+    # at the moment of contract action rather than the level. See
+    # ``calculate_alpha_signals`` docstring for full definitions.
+    ceiling_change_log_dollars: Optional[float]
+    ceiling_change_pct_of_mcap: Optional[float]
+    relative_ceiling_change: Optional[float]
+    event_class: Optional[str]
+
     # Row-level metadata (M1.4 / M1.5 / M1.7)
     is_primary_action: Optional[bool]
     signal_quality: Optional[str]

@@ -19,9 +19,12 @@ import pandas as pd
 import pytest
 
 from backend.scripts.report import (
+    EVENT_CLASSES_OF_INTEREST,
     INDUSTRY_BREAKDOWN_SIGNALS,
     MIN_INDUSTRY_ROWS,
     SIGNAL_CANDIDATES,
+    _build_event_class_ic_sections,
+    _build_event_magnitude_ic_sections,
     _build_industry_ic_sections,
     _build_is_primary_comparison,
     _build_per_quarter_stability_section,
@@ -124,6 +127,23 @@ def _fixture_signals_with_returns(n: int = 200, seed: int = 0) -> pd.DataFrame:
 
     df["fiscal_quarter"] = df["action_date"].apply(_fq)
     df["reference_trading_date"] = df["action_date"]
+
+    # M_events: synthesise event_class + magnitude features so the
+    # event-section builders have data to render. We assign event_class
+    # by position to ensure each class has enough rows.
+    n = len(df)
+    classes = (
+        ["NEW_AWARD"] * (n // 6)
+        + ["MAJOR_EXPANSION"] * (n // 6)
+        + ["MODERATE_EXPANSION"] * (n // 6)
+        + ["MINOR_EXPANSION"] * (n // 6)
+        + ["CONTRACTION"] * (n // 6)
+        + ["NON_EVENT"] * (n - 5 * (n // 6))
+    )
+    df["event_class"] = classes[:n]
+    df["ceiling_change_log_dollars"] = rng.standard_normal(n) * 2
+    df["ceiling_change_pct_of_mcap"] = rng.standard_normal(n) * 0.01
+    df["relative_ceiling_change"] = rng.standard_normal(n) * 0.2
     return df
 
 
@@ -180,9 +200,12 @@ def test_generate_report_end_to_end(tmp_path: Path):
     assert "5. Robustness" in html
     # M2.5: new industry / stability sections bumped the decision-summary
     # header from 6 to 8.
+    # M_events: event-class + event-magnitude sections bumped it again to 10.
     assert "6. Industry-level IC breakdown" in html
     assert "7. Per-quarter stability filter" in html
-    assert "8. Decision Summary" in html
+    assert "8. Event-class IC breakdown" in html
+    assert "9. Event-magnitude IC breakdown" in html
+    assert "10. Decision Summary" in html
     # Threshold reminders embedded.
     assert "|IC| &gt;= 0.02" in html
     assert "|IC| &gt;= 0.05" in html
@@ -351,8 +374,91 @@ def test_generate_report_includes_new_sections(tmp_path: Path):
     html = out.read_text()
     assert "6. Industry-level IC breakdown" in html
     assert "7. Per-quarter stability filter" in html
-    assert "8. Decision Summary" in html
+    # M_events: event sections were inserted between per-quarter and
+    # decision summary, bumping the latter from 8 to 10.
+    assert "8. Event-class IC breakdown" in html
+    assert "9. Event-magnitude IC breakdown" in html
+    assert "10. Decision Summary" in html
 
     md = out.with_suffix(".md").read_text()
     assert "Industry-level IC breakdown" in md
     assert "Per-quarter stability filter" in md
+    assert "Event-class IC breakdown" in md
+    assert "Event-magnitude IC breakdown" in md
+
+
+# ---------------------------------------------------------------------------
+# Event-class + event-magnitude builders (M_events)
+# ---------------------------------------------------------------------------
+
+
+def test_event_class_section_renders_each_class_present_in_data():
+    """
+    The fixture has 6 event classes. The builder should produce an
+    <h3> heading for each one listed in EVENT_CLASSES_OF_INTEREST,
+    regardless of whether any IC cell clears the filter.
+    """
+    df = _fixture_signals_with_returns(n=900, seed=8)
+    html = _build_event_class_ic_sections(df)
+    for event_class in EVENT_CLASSES_OF_INTEREST:
+        # NEW_DELIVERY_ORDER isn't in the fixture; expect "below the
+        # minimum" or "no cells" wording rather than a positive table.
+        # All 6 classes should appear as headings either way.
+        assert event_class in html, f"missing class heading: {event_class}"
+
+
+def test_event_class_section_handles_missing_event_column():
+    """
+    If the dataset doesn't have ``event_class`` (e.g. an old DB from
+    before M_events landed), the builder must not crash.
+    """
+    df = _fixture_signals_with_returns(n=300, seed=9)
+    df = df.drop(columns=["event_class"])
+    html = _build_event_class_ic_sections(df)
+    assert "event_class column not present" in html
+
+
+def test_event_magnitude_section_renders_each_feature():
+    """
+    All three magnitude features (log_dollars, pct_of_mcap, relative)
+    should appear as <h3> headings. Whether any cells survive the
+    cross-year filter is data-dependent and not asserted.
+    """
+    df = _fixture_signals_with_returns(n=900, seed=10)
+    html = _build_event_magnitude_ic_sections(df)
+    assert "ceiling_change_log_dollars" in html
+    assert "ceiling_change_pct_of_mcap" in html
+    assert "relative_ceiling_change" in html
+
+
+def test_event_magnitude_section_marks_missing_feature():
+    """
+    If a magnitude feature column is missing, the builder must
+    still produce a section for it with a 'not present' note.
+    """
+    df = _fixture_signals_with_returns(n=300, seed=11)
+    df = df.drop(columns=["relative_ceiling_change"])
+    html = _build_event_magnitude_ic_sections(df)
+    assert "relative_ceiling_change" in html
+    assert "feature column not present" in html
+
+
+def test_event_class_section_engineered_signal_surfaces():
+    """
+    Engineer a deterministic relationship between
+    `acv_alpha_ratio` and `industry_excess_return_20d` within
+    MAJOR_EXPANSION rows so that the IC clears 0.02 AND is same-signed
+    across all FY24 quarters. With only one fiscal year in the fixture,
+    the 5-of-6-years filter can't be met -- so this verifies the BUILDER
+    still emits the section header without error.
+    """
+    df = _fixture_signals_with_returns(n=1200, seed=12)
+    me_mask = df["event_class"] == "MAJOR_EXPANSION"
+    df.loc[me_mask, "industry_excess_return_20d"] = (
+        df.loc[me_mask, "acv_alpha_ratio"] * 50
+    )
+    html = _build_event_class_ic_sections(df)
+    # Section should produce some output (either survivors or empty
+    # placeholders) -- the test's job is to ensure no exceptions and
+    # that MAJOR_EXPANSION specifically is mentioned.
+    assert "MAJOR_EXPANSION" in html

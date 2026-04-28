@@ -166,7 +166,12 @@ def filter_and_select_phase1(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRel
     CAST(potential_total_value_of_award AS DOUBLE) - prev_potential_value AS ceiling_change
     """
 
-    return rel_with_lag.project(proj_expr).project("* EXCLUDE (prev_potential_value)")
+    # M1.7 (events): we now keep ``prev_potential_value`` in the output so
+    # ``calculate_alpha_signals`` can compute ``relative_ceiling_change`` =
+    # ``ceiling_change / prev_potential_value`` without needing another LAG
+    # window. It's a small intermediate column with no downstream consumer
+    # outside Phase 4 -- benign in upstream tables.
+    return rel_with_lag.project(proj_expr)
 
 
 # --- Phase 2 Pure Transforms ---
@@ -336,6 +341,19 @@ def derive_deliverable(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
 MICROCAP_THRESHOLD: float = 50_000_000.0
 
 
+#: Event-class threshold for "MAJOR_EXPANSION" funding-increase events.
+#: Picked from the empirical distribution of ``ceiling_change`` (~5,338
+#: events at >$100M out of ~175k FUNDING_INCREASE rows in the resolved
+#: universe). Above this we expect analyst attention; below it the
+#: ceiling jump is likely incremental option exercise.
+MAJOR_EXPANSION_THRESHOLD: float = 1e8  # $100M
+
+#: Threshold separating "MODERATE_EXPANSION" from "MINOR_EXPANSION".
+#: Calibrated against the same distribution: ~14.9k events > $10M total,
+#: ~5.3k > $100M, leaving ~9.6k in the $10M-$100M moderate band.
+MODERATE_EXPANSION_THRESHOLD: float = 1e7  # $10M
+
+
 def calculate_alpha_signals(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRelation:
     """
     Compute quantitative signals on top of ``themed_awards``.
@@ -361,6 +379,26 @@ def calculate_alpha_signals(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRela
     * ``acv_alpha_ratio``                         -- acv_signal / market_cap
     * ``difference_between_obligated_and_potential``
                                                   -- potential_total - total_obligated
+
+    **Event-magnitude features (new in M_events)**:
+
+    * ``ceiling_change_log_dollars`` -- signed ``log10(|ceiling_change|)``;
+      positive when ceiling expands, negative when it shrinks. NULL for
+      zero-or-NULL ceiling-change rows. Useful for reducing the long-tail
+      sensitivity of dollar-amount-based ICs.
+    * ``ceiling_change_pct_of_mcap`` -- ``ceiling_change / market_cap``.
+      The "what fraction of the company's value just got announced"
+      metric; the natural step-change analog of ``alpha_ratio``.
+    * ``relative_ceiling_change``    -- ``ceiling_change / prev_potential_value``.
+      The percent expansion of the ceiling. A 50% jump on a $100M
+      contract is a different signal than a 5% jump on a $1B contract,
+      even at the same dollar magnitude.
+    * ``event_class`` (TEXT) -- discrete bucket combining
+      ``transaction_type`` and ``ceiling_change`` magnitude:
+      ``NEW_AWARD``, ``NEW_DELIVERY_ORDER``, ``MAJOR_EXPANSION``
+      (FI > $100M), ``MODERATE_EXPANSION`` (FI $10M-$100M),
+      ``MINOR_EXPANSION`` (FI < $10M positive), ``CONTRACTION``
+      (negative ceiling_change), ``OTHER_MOD``, ``NON_EVENT``.
 
     **Row-level metadata** (new in M1):
 
@@ -479,4 +517,68 @@ def calculate_alpha_signals(rel: duckdb.DuckDBPyRelation) -> duckdb.DuckDBPyRela
                  THEN 'extreme_ratio' ELSE NULL END
         ], x -> x IS NOT NULL), ';'), ''), 'ok') AS signal_quality
     """
-    return step4.project(proj5)
+    step5 = step4.project(proj5)
+
+    # Step 6 (events): event-class + event-magnitude features.
+    #
+    # Three magnitude features and one categorical:
+    #
+    #   * ``ceiling_change_log_dollars`` -- signed log10 of |ceiling_change|.
+    #     Positive when expansion, negative when contraction. NULL when
+    #     ceiling_change is NULL or zero (no event to characterise).
+    #     Compresses the long-tail dollar distribution so a single
+    #     mega-contract doesn't dominate IC computations.
+    #
+    #   * ``ceiling_change_pct_of_mcap`` -- the announced delta as a
+    #     fraction of market cap. Natural step-change analog of
+    #     ``alpha_ratio``. NULL when market_cap is NULL or zero.
+    #
+    #   * ``relative_ceiling_change`` -- ``ceiling_change / prev_potential_value``,
+    #     i.e. the percent expansion. NULL when ``prev_potential_value`` is
+    #     absent (unit-test mocks) or zero.
+    #
+    #   * ``event_class`` -- the categorical bucket the event falls into.
+    #     Used by the report's event-class IC tables.
+    #
+    # If ``prev_potential_value`` isn't in the relation (most unit-test
+    # fixtures), we fall back to NULL ``relative_ceiling_change`` rather
+    # than failing -- matches the schema-on-best-effort convention used
+    # for ``ceiling_change`` itself.
+    has_prev = "prev_potential_value" in step5.columns
+    rel_ceil_expr = (
+        "CAST(ceiling_change AS DOUBLE) / NULLIF(prev_potential_value, 0)"
+        if has_prev
+        else "CAST(NULL AS DOUBLE)"
+    )
+    # Always EXCLUDE prev_potential_value from the final output; it has
+    # served its purpose computing ceiling_change and (optionally)
+    # relative_ceiling_change. Excluding it keeps signals_awards lean.
+    exclude_clause = "EXCLUDE (prev_potential_value)" if has_prev else ""
+    proj6 = f"""
+        * {exclude_clause},
+        CASE
+            WHEN ceiling_change IS NULL OR ceiling_change = 0 THEN NULL
+            WHEN ceiling_change > 0 THEN LOG10(GREATEST(1.0, ceiling_change))
+            ELSE -LOG10(GREATEST(1.0, ABS(ceiling_change)))
+        END AS ceiling_change_log_dollars,
+        CAST(ceiling_change AS DOUBLE) / NULLIF(market_cap, 0) AS ceiling_change_pct_of_mcap,
+        {rel_ceil_expr} AS relative_ceiling_change,
+        CASE
+            WHEN CAST(transaction_type AS VARCHAR) = 'NEW_AWARDS' THEN 'NEW_AWARD'
+            WHEN CAST(transaction_type AS VARCHAR) = 'NEW_DELIVERY_ORDERS' THEN 'NEW_DELIVERY_ORDER'
+            WHEN CAST(transaction_type AS VARCHAR) = 'FUNDING_INCREASE'
+                 AND ceiling_change IS NOT NULL
+                 AND ceiling_change > {MAJOR_EXPANSION_THRESHOLD} THEN 'MAJOR_EXPANSION'
+            WHEN CAST(transaction_type AS VARCHAR) = 'FUNDING_INCREASE'
+                 AND ceiling_change IS NOT NULL
+                 AND ceiling_change > {MODERATE_EXPANSION_THRESHOLD} THEN 'MODERATE_EXPANSION'
+            WHEN CAST(transaction_type AS VARCHAR) = 'FUNDING_INCREASE'
+                 AND ceiling_change IS NOT NULL
+                 AND ceiling_change > 0 THEN 'MINOR_EXPANSION'
+            WHEN ceiling_change IS NOT NULL AND ceiling_change < 0 THEN 'CONTRACTION'
+            WHEN CAST(transaction_type AS VARCHAR) = 'MODIFICATION'
+                 AND COALESCE(ceiling_change, 0) = 0 THEN 'OTHER_MOD'
+            ELSE 'NON_EVENT'
+        END AS event_class
+    """
+    return step5.project(proj6)

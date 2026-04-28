@@ -18,4 +18,4 @@ Follow semver-ish: MAJOR.MINOR.PATCH
 Every bump must be recorded in CHANGELOG.md at the repo root.
 """
 
-PIPELINE_VERSION: str = "1.4.0"
+PIPELINE_VERSION: str = "1.5.0"

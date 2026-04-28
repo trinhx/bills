@@ -15,6 +15,92 @@ row of ``signals_awards``.
 
 ---
 
+## [1.5.0] — Event-Based Signals (M_events)
+
+After the 6-year cross-regime analysis (`validation_report_20260424_6yr`)
+showed every level-based ratio signal sign-flipping across regimes, this
+milestone tests an alternative hypothesis: that the alpha lives in the
+*step-change* (the moment of contract action) rather than the *level* (every
+transaction). Pure additive change — no breaking renames.
+
+### Added — `signals_awards` columns
+
+* `ceiling_change_log_dollars` (DOUBLE) -- signed `log10(|ceiling_change|)`;
+  positive on expansions, negative on contractions, NULL when ceiling
+  change is zero/NULL. Compresses the long-tail dollar-amount distribution
+  so the IC isn't dominated by a handful of mega-contracts.
+* `ceiling_change_pct_of_mcap` (DOUBLE) -- `ceiling_change / market_cap`,
+  the step-change analog of `alpha_ratio`.
+* `relative_ceiling_change` (DOUBLE) -- `ceiling_change /
+  prev_potential_value`, i.e. the percent expansion of the contract's
+  ceiling. NULL when the prior ceiling is zero/NULL or unavailable
+  (older unit-test fixtures).
+* `event_class` (TEXT) -- discrete bucket combining `transaction_type`
+  and `ceiling_change` magnitude:
+  * `NEW_AWARD` -- first action on a piid (no parent IDIQ)
+  * `NEW_DELIVERY_ORDER` -- first task order against an IDIQ parent
+  * `MAJOR_EXPANSION` -- FUNDING_INCREASE with `ceiling_change > $100M`
+  * `MODERATE_EXPANSION` -- FUNDING_INCREASE with `ceiling_change` in
+    `($10M, $100M]`
+  * `MINOR_EXPANSION` -- FUNDING_INCREASE with positive `ceiling_change <= $10M`
+  * `CONTRACTION` -- any negative `ceiling_change`
+  * `OTHER_MOD` -- modifications with no ceiling change
+  * `NON_EVENT` -- everything else (e.g. NULL `transaction_type`)
+
+### Added — report sections
+
+* **Section 8: Event-class IC breakdown.** For each `event_class`,
+  per-(signal × horizon) cells where `|IC_all| ≥ 0.02` AND the IC is
+  same-signed in ≥ 5 of 6 fiscal years. The 5/6 cross-regime threshold is
+  the bar that has killed every prior level-based signal — survivors here
+  would be the first signals to clear it.
+* **Section 9: Event-magnitude IC breakdown.** For each magnitude feature
+  (`log_dollars`, `pct_of_mcap`, `relative`), IC by (event_class × horizon)
+  with the same cross-regime filter. Designed to surface whether the signal
+  is about contract scaling vs company-size scaling.
+* Section numbering bumped: Decision Summary moved from 8 → 10.
+
+### Changed
+
+* Phase 1 (`filter_and_select_phase1`) now KEEPS `prev_potential_value` in
+  its output relation so Phase 4 can compute `relative_ceiling_change`
+  without re-running a LAG window. The column is removed from the final
+  `signals_awards` output by `calculate_alpha_signals` after it has served
+  its purpose.
+
+### Tests
+
+* **5 new unit tests** in `test_signals.py`:
+  * `test_event_class_assigns_each_branch_correctly` -- 8-row fixture, one
+    per `event_class`, asserts each row maps to its namesake bucket.
+  * `test_ceiling_change_log_dollars_is_signed` -- positive expansions
+    yield positive log values; contractions yield negative; NULL/zero
+    yield NULL.
+  * `test_ceiling_change_pct_of_mcap` -- numerator/denominator math; NULLIF
+    semantics on zero `market_cap`.
+  * `test_relative_ceiling_change_uses_prev_potential_value` -- divisor is
+    the prior ceiling, not the current one.
+  * `test_event_columns_fall_back_to_null_when_prev_potential_value_absent`
+    -- backward-compat with unit-test fixtures lacking `prev_potential_value`.
+* **5 new tests** in `test_report.py`:
+  * `test_event_class_section_renders_each_class_present_in_data`
+  * `test_event_class_section_handles_missing_event_column`
+  * `test_event_magnitude_section_renders_each_feature`
+  * `test_event_magnitude_section_marks_missing_feature`
+  * `test_event_class_section_engineered_signal_surfaces`
+
+### Operational notes
+
+* No re-fetch of returns required. The new columns are pure derivations
+  of existing `signals_awards` columns. Pipeline cost on existing data:
+  re-run Phase 4 (~10s) + re-run validate.py (~1 min) + re-run report.py
+  (~1-2 min).
+* The cross-regime threshold (≥ 5 of 6 fiscal years) is set in
+  `backend/scripts/report.py::EVENT_MIN_SAME_SIGN_YEARS`. Tunable for
+  future analyses.
+
+---
+
 ## [1.4.0] — Milestone 2.5: Industry Neutralization + Per-Quarter Stability
 
 Additive enhancement to the M2 validation harness. Surfaces signals that
